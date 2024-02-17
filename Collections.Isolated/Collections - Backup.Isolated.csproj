@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <Folder Include="Registration\" />
+    <Folder Include="Serialization\" />
   </ItemGroup>
 
 </Project>

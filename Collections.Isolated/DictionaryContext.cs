@@ -5,68 +5,46 @@ using Microsoft.Extensions.Logging;
 
 namespace Collections.Isolated;
 
-public sealed class DictionaryContext<TKey, TValue> : IDictionaryContext<TKey, TValue>, IDisposable
-    where TKey : notnull
+public sealed class DictionaryContext<TValue> : IDictionaryContext<TValue>, IDisposable
     where TValue : class
 {
     private readonly string _id = Guid.NewGuid().ToString();
-    private readonly IsolatedDictionary<TKey, TValue> _dictionary;
+    private readonly IsolatedDictionary<TValue> _dictionary;
 
-    public DictionaryContext(IsolatedDictionary<TKey, TValue> dictionary, ILogger<DictionaryContext<TKey, TValue>> logger)
+    public DictionaryContext(IsolatedDictionary<TValue> dictionary, ILogger<DictionaryContext<TValue>> logger)
     {
         _dictionary = dictionary;
         Result.Logging ??= logger;
+
+        _dictionary.CreateTransaction(_id);
     }
 
-    public async Task AddOrUpdateAsync(TKey key, TValue value)
+    public void AddOrUpdate(string key, TValue value)
     {
-        var result = await _dictionary.ApplyAsync(new AddOrUpdate<TKey, TValue>((key, value)), _id);
+        _dictionary.ApplyOperationAsync(new AddOrUpdate<TValue>(key, value), _id);
+    }
 
-        if (result.IsFailure())
+    public void AddOrUpdateRange(IEnumerable<(string key, TValue value)> items)
+    {
+        foreach (var (key, value) in items)
         {
-            throw new InvalidOperationException(result.Exception!.Message);
+            _dictionary.ApplyOperationAsync(new AddOrUpdate<TValue>(key, value), _id);
         }
     }
 
-    public async Task AddOrUpdateRange(IEnumerable<(TKey key, TValue value)> items)
+    public void Remove(string key)
     {
-        var result = await _dictionary.ApplyAsync(new AddOrUpdateRange<TKey, TValue>(items), _id);
-
-        if (result.IsFailure())
-        {
-            throw new InvalidOperationException(result.Exception!.Message);
-        }
+        _dictionary.ApplyOperationAsync(new Remove<TValue>(key), _id);
     }
 
-    public async Task RemoveAsync(TKey key)
+    public int Count()
     {
-        var result = await _dictionary.ApplyAsync(new Remove<TKey, TValue>(key), _id);
-
-        if (result.IsFailure())
-        {
-            throw new InvalidOperationException(result.Exception!.Message);
-        }
+        return _dictionary.Count();
     }
 
-    public async Task<TValue?> TryGetAsync(TKey key)
+    public TValue? TryGet(string key)
     {
-        var result = await _dictionary.Get(key, _id);
-
-        return result.IsSuccess()
-            ? result.GetValueOrThrow()
-            : default;
-    }
-
-    public async Task<List<TValue>> QueryAsync(Func<IEnumerable<TValue>, IEnumerable<TValue>> filter)
-    {
-        var result = await _dictionary.Query(filter, _id);
-
-        if (result.IsFailure())
-        {
-            throw new InvalidOperationException(result.Exception!.Message);
-        }
-
-        return result.GetValueOrThrow();
+        return _dictionary.Get(key, _id);
     }
 
     public Task SaveChangesAsync()

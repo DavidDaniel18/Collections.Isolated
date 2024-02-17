@@ -1,205 +1,174 @@
 ﻿using System.Collections.Concurrent;
 using System.Collections.Immutable;
-using Collections.Isolated.Monads;
-using Collections.Isolated.ValueObjects;
 using Collections.Isolated.ValueObjects.Commands;
 using Collections.Isolated.ValueObjects.Query;
+using Microsoft.Extensions.Logging;
 
 namespace Collections.Isolated.Entities;
 
-internal sealed class Transaction<TKey, TValue>
-    where TValue : class
-    where TKey : notnull
+internal sealed class Transaction<TValue> where TValue : class
 {
-    public string Id { get; }
+    private readonly ILogger _logger;
 
-    public DateTime CreatedAt { get; private set; } = DateTime.UnixEpoch;
+    private string Id { get; }
 
-    private readonly SemaphoreSlim _semaphore = new(1, 1);
+    private readonly SemaphoreSlim _operationsSemaphore = new(1, 1);
 
-    internal ImmutableList<Operation<TKey, TValue>> Operations { get; private set; } = ImmutableList<Operation<TKey, TValue> >.Empty;
+    //we compress the log to only show applied values
+    private ConcurrentDictionary<string, WriteOperation<TValue>> Operations { get; set; } = new();
 
-    private ImmutableHashSet<TKey> _lockedKeys = ImmutableHashSet<TKey>.Empty;
+    private readonly SemaphoreSlim _keySemaphore = new(1, 1);
 
-    private bool _isBlocked;
+    private ImmutableHashSet<string> _lockedKeys = ImmutableHashSet<string>.Empty;
 
-    public Transaction(string id)
+    private readonly ConcurrentDictionary<string, TValue> _snapshot;
+
+    public Transaction(string id, ILogger logger, ConcurrentDictionary<string, TValue> snapshot)
     {
+        _logger = logger;
         Id = id;
+        _snapshot = snapshot;
     }
 
-    public void Block()
+    public void AddReadOperation(ReadOperation readOperation)
     {
-        _isBlocked = true;
+        UnlockKeysOnRead(readOperation);
     }
 
-    public async Task<Result> Add(Operation<TKey, TValue> operation)
+    public void AddWriteOperation(WriteOperation<TValue> writeOperation)
     {
-        if (_isBlocked) return Result.Failure($"Transaction {Id} is blocked, cannot add {operation.GetType()} on {typeof(TValue)}");
-
-        if (Operations.Exists(op => op.Id.Equals(operation.Id))) return Result.Success();
-
         try
         {
-            await _semaphore.WaitAsync();
+            _operationsSemaphore.Wait();
 
-            if (Operations.IsEmpty)
+            if (Operations.ContainsKey(writeOperation.Key))
             {
-                CreatedAt = DateTime.UtcNow;
+                Operations.TryRemove(writeOperation.Key, out _);
             }
 
-            switch (operation)
-            {
-                //any read operation will unlock the keys
-                case ReadOperation<TKey, TValue> readOperation:
-                    _lockedKeys = readOperation switch
-                    {
-                        QueryKey<TKey, TValue> queryKey when _lockedKeys.Contains(queryKey.Key) => _lockedKeys.Remove(queryKey.Key),
-                        QueryAll<TKey, TValue> => _lockedKeys.Clear(),
-                        _ => _lockedKeys
-                    };
-                    break;
-                case WriteOperation<TKey, TValue> writeOperation when writeOperation.IsKeyColliding(_lockedKeys):
-                    return Result.Failure("Transaction is colliding with another transaction");
-            }
-
-            Operations = Operations.Add(operation).OrderBy(op => op.CreatedAt).ToImmutableList();
-
-            return Result.Success();
-        }
-        catch
-        {
-            return Result.Failure("Error while applying operation");
+            Operations[writeOperation.Key] = writeOperation;
         }
         finally
         {
-            _semaphore.Release();
+            _operationsSemaphore.Release();
         }
     }
 
-    public async Task<Result> Apply(ConcurrentDictionary<TKey, TValue> store)
+    private void UnlockKeysOnRead(ReadOperation readOperation)
     {
-        if(_isBlocked) return Result.Failure($"Transaction {Id} is blocked, Cannot Save Changes on {typeof(TValue)}");
-
         try
         {
-            await _semaphore.WaitAsync();
+            _keySemaphore.Wait();
 
-            var result = Result.Foreach(Operations, operation =>
+            _lockedKeys = readOperation switch
             {
-                if (operation is WriteOperation<TKey, TValue> writeOperation)
-                {
-                    return writeOperation.Apply(store);
-                }
-
-                return Result.Success();
-            });
-
-            return result;
-        }
-        catch
-        {
-            return Result.Failure("Error while applying operation");
+                QueryKey queryKey when _lockedKeys.Contains(queryKey.Key) => _lockedKeys.Remove(queryKey.Key),
+                QueryAll => _lockedKeys.Clear(),
+                _ => _lockedKeys
+            };
         }
         finally
         {
-            _semaphore.Release();
+            _keySemaphore.Release();
         }
     }
 
-    public Result<ConcurrentDictionary<TKey,TValue>> VirtualApply(ConcurrentDictionary<TKey, TValue> store)
+    internal void Apply(ConcurrentDictionary<string, TValue> store)
     {
-        var copy = new ConcurrentDictionary<TKey, TValue>(store);
+        if (Operations.Any() is false) return;
 
-        return Result.Foreach(Operations, operation =>
+        try
         {
-            if (operation is WriteOperation<TKey, TValue> writeOperation)
-            {
-                return writeOperation.Apply(copy);
-            }
+            _operationsSemaphore.Wait();
 
-            return Result.Success();
-        }).Bind(() => Result.Success(copy));
+            foreach (var operation in Operations.Values)
+            {
+                operation.Apply(store);
+            }
+        }
+        catch
+        {
+            _logger.LogError("Error applying transaction {Id}", Id);
+            throw;
+        }
+        finally
+        {
+            _operationsSemaphore.Release();
+        }
     }
 
     public void Clear()
     {
-        Operations = ImmutableList<Operation<TKey, TValue>>.Empty;
-    }
-
-    public async Task<bool> CollidesWithNewState(Transaction<TKey, TValue> newStateTransaction)
-    {
-        if (_isBlocked) return false;
-
         try
         {
-            await _semaphore.WaitAsync();
+            _operationsSemaphore.Wait();
 
-            var newWrites = newStateTransaction.GetWriteOperations();
-
-            var datetimeByWrittenKeys =
-                from write in newWrites
-                let keysAndTimes = (write.GetKeys(), write.CreatedAt)
-                from key in keysAndTimes.Item1
-                let keyAndTime = (key, keysAndTimes.CreatedAt)
-                group keyAndTime by keyAndTime.key into grouped
-                select grouped.MinBy(g => g.CreatedAt);
-
-            var newDatetimeByWrittenKeysDict = datetimeByWrittenKeys.ToDictionary(tuple => tuple.key, tuple => tuple.CreatedAt);
-
-            if (Operations.Any(operation => operation is WriteOperation<TKey, TValue>) is false)
-            {
-                foreach (var operation in Operations)
-                {
-                    _lockedKeys = operation switch
-                    {
-                        QueryKey<TKey, TValue> queryKey => newDatetimeByWrittenKeysDict.ContainsKey(queryKey.Key) ? _lockedKeys.Add(queryKey.Key) : _lockedKeys,
-                        QueryAll<TKey, TValue> => _lockedKeys.Union(newDatetimeByWrittenKeysDict.Keys.ToImmutableHashSet()),
-                        _ => _lockedKeys
-                    };
-                }
-            }
-
-            foreach (var operation in Operations)
-            {
-                if (operation is WriteOperation<TKey, TValue> writeOperation)
-                {
-                    if (IsAnyOperationSharingKeysAndHappeningBeforeNewWrite(writeOperation, newDatetimeByWrittenKeysDict)) 
-                        return true;
-                }
-            }
-
-            _lockedKeys = _lockedKeys.Union(newWrites.SelectMany(write => write.GetKeys()));
-
-            return false;
+            Operations.Clear();
+            _snapshot.Clear();
         }
         finally
         {
-            _semaphore.Release();
+            _operationsSemaphore.Release();
         }
-       
     }
 
-    private static bool IsAnyOperationSharingKeysAndHappeningBeforeNewWrite(WriteOperation<TKey, TValue> writeOperation, Dictionary<TKey, DateTime> newDatetimeByWrittenKeysDict)
+    public TValue? Get(string key)
     {
-        return writeOperation.GetKeys().Any(key =>
+        if (Operations.TryGetValue(key, out var operation) && operation is AddOrUpdate<TValue> addOrUpdate)
         {
-            if (newDatetimeByWrittenKeysDict.TryGetValue(key, out var newDatetime))
+            return addOrUpdate.Value;
+        }
+
+        return _snapshot.GetValueOrDefault(key);
+    }
+
+    public HashSet<WriteOperation<TValue>> GetOperations()
+    {
+        return [..Operations.Values];
+    }
+
+    public async Task Sync(HashSet<WriteOperation<TValue>> operationsToProcess)
+    {
+        try
+        {
+            await _keySemaphore.WaitAsync();
+
+            foreach (var operation in operationsToProcess)
             {
-                return newDatetime > writeOperation.CreatedAt;
+                _lockedKeys = _lockedKeys.Add(operation.Key);
+
+                AddWriteOperation(operation);
             }
 
-            return false;
-        });
+            Apply(_snapshot);
+        }
+        finally
+        {
+            _keySemaphore.Release();
+        }
     }
 
-    public List<WriteOperation<TKey,TValue>> GetWriteOperations()
+    public bool AnyConflictingLockedKeys()
     {
-        return Operations.Where(operation => operation is WriteOperation<TKey, TValue>).Cast<WriteOperation<TKey, TValue>>().ToList();
+        var intersected = _lockedKeys.Intersect(Operations.Select(op => op.Key)).Count > 0;
+
+        return intersected;
     }
 
-    public bool HasAnyWrites()
+    public void RollBackConflictingKeys()
     {
-        return GetWriteOperations().Any();
+        try
+        {
+            _operationsSemaphore.Wait();
+
+            foreach (var key in _lockedKeys)
+            {
+                Operations.TryRemove(key, out _);
+            }
+        }
+        finally
+        {
+            _operationsSemaphore.Release();
+        }
     }
 }

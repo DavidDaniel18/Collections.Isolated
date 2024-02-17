@@ -1,104 +1,92 @@
 ﻿using System.Collections.Concurrent;
-using System.Text.Json;
 using Collections.Isolated.Entities;
-using Collections.Isolated.Monads;
-using Collections.Isolated.ValueObjects;
+using Collections.Isolated.Serialization;
 using Collections.Isolated.ValueObjects.Commands;
 using Collections.Isolated.ValueObjects.Query;
+using Microsoft.Extensions.Logging;
 
 namespace Collections.Isolated;
 
-public sealed class IsolatedDictionary<TKey, TValue> 
-    where TValue : class 
-    where TKey : notnull
+public sealed class IsolatedDictionary<TValue> where TValue : class 
 {
-    private readonly ConcurrentDictionary<TKey, TValue> _dictionary = new();
+    private readonly ILogger<IsolatedDictionary<TValue>> _logger;
 
-    private readonly ConcurrentDictionary<string, Transaction<TKey, TValue>> _transactions = new();
+    private readonly ConcurrentDictionary<string, TValue> _dictionary = new();
+
+    private readonly ConcurrentDictionary<string, Transaction<TValue>> _transactions = new();
 
     private readonly ConcurrentBag<string> _processedTransactions = new();
 
     private readonly SemaphoreSlim _semaphore = new(1, 1);
 
-    internal async Task<Result<TValue>> Get(TKey key, string transactionId)
+    public IsolatedDictionary(ILogger<IsolatedDictionary<TValue>> logger)
     {
-        var transaction = GetTransaction(transactionId);
-
-        return await transaction.VirtualApply(_dictionary)
-            .BindAsync(async virtualCopy =>
-            {
-                if (virtualCopy.TryGetValue(key, out var value))
-                {
-                    await transaction.Add(new QueryKey<TKey, TValue>(key));
-
-                    return DeepCloneValue(value);
-                }
-
-                return Result.Failure<TValue>($"Key {key} not found in cache");
-            });
+        _logger = logger;
     }
 
-    internal async Task<Result<List<TValue>>> Query(Func<IEnumerable<TValue>, IEnumerable<TValue>> filter, string transactionId)
+    internal TValue? Get(string key, string transactionId)
     {
-        var transaction = GetTransaction(transactionId);
+        var transaction = GetOrCreateTransaction(transactionId);
 
-        return await transaction.VirtualApply(_dictionary)
-            .BindAsync(async virtualCopy =>
-            {
-                var filteredItems = filter(virtualCopy.Values)
-                    .Select(value => DeepCloneValue(value).GetValueOrThrow())
-                    .ToList();
+        transaction.AddReadOperation(new QueryKey(key));
 
-                await transaction.Add(new QueryAll<TKey, TValue>());
-
-                return Result.Success(filteredItems);
-            });
+        return transaction.Get(key);
     }
 
-    internal async Task<Result> ApplyAsync(Operation<TKey, TValue> operation, string transactionId)
+    internal void ApplyOperationAsync(WriteOperation<TValue> operation, string transactionId)
     {
-        return 
-            await GetTransaction(transactionId)
-            .Add(operation)
-            .FailedAsync(exception => _transactions.TryRemove(transactionId, out _));
-    }
-
-    internal async Task<Result<List<WriteOperation<TKey, TValue>>>> SaveChangesAsync(string transactionId)
-    {
-        await _semaphore.WaitAsync();
-
         try
         {
+            var transaction = GetTransaction(transactionId) ?? CreateTransaction(transactionId);
+
+            transaction.AddWriteOperation(operation);
+        }
+        catch (Exception)
+        {
+            _transactions.TryRemove(transactionId, out _);
+            throw;
+        }
+    }
+
+    internal async Task SaveChangesAsync(string transactionId)
+    {
+        try
+        {
+            await _semaphore.WaitAsync();
+
             var transaction = GetTransaction(transactionId);
 
-            var transactionsIdToBlock = new ConcurrentBag<string>();
+            if (transaction is null)
+            {
+                throw new InvalidOperationException("Transaction not found");
+            }
 
-            var result = await Result.ForeachAsync(_transactions, async pair =>
-                {
-                    if (pair.Key == transactionId) return Result.Success();
+            if (transaction.AnyConflictingLockedKeys())
+            {
+                transaction.RollBackConflictingKeys();
 
-                    if (await pair.Value.CollidesWithNewState(transaction))
-                    {
-                        transactionsIdToBlock.Add(pair.Key);
-                    }
+                throw new InvalidOperationException("Transaction has conflicting locked keys");
+            }
 
-                    return Result.Success();
-                })
-                .BindAsync(() => transactionsIdToBlock.ToList().ForEach(id => _transactions[id].Block()))
-                .BindAsync(() => transaction.Apply(_dictionary));
-
-            result.ThrowIfException();
+            transaction.Apply(_dictionary);
 
             _processedTransactions.Add(transactionId);
 
             _transactions.Remove(transactionId, out _);
 
-            return Result.Success(transaction.Operations.Where(operation => operation is WriteOperation<TKey, TValue>)
-                .Cast<WriteOperation<TKey, TValue>>().ToList());
-        }
-        catch(Exception e)
-        {
-            return Result.Failure<List<WriteOperation<TKey, TValue>>>($"Error while saving changes: {e}");
+            var transactionsToProcess = transaction.GetOperations();
+
+            transactionsToProcess = transactionsToProcess.ToList().ConvertAll(operation =>
+            {
+                if (operation is AddOrUpdate<TValue> addOrUpdate)
+                {
+                    return new AddOrUpdate<TValue>(addOrUpdate.Key, DeepCloneValue(addOrUpdate.Value));
+                }
+
+                return operation;
+            }).ToHashSet();
+
+            await Parallel.ForEachAsync(_transactions, async (pair, _) => await pair.Value.Sync(transactionsToProcess));
         }
         finally
         {
@@ -115,21 +103,39 @@ public sealed class IsolatedDictionary<TKey, TValue>
         }
     }
 
-    private Transaction<TKey, TValue> GetTransaction(string transactionId)
+    private Transaction<TValue> GetOrCreateTransaction(string transactionId)
     {
-        return _transactions.GetOrAdd(transactionId, new Transaction<TKey, TValue>(Guid.NewGuid().ToString()));
+        return GetTransaction(transactionId) ?? CreateTransaction(transactionId);
     }
 
-    private Result<TValue> DeepCloneValue(TValue value)
+    private Transaction<TValue>? GetTransaction(string transactionId)
     {
-        var options = new JsonSerializerOptions { WriteIndented = true, IncludeFields = true };
+        _transactions.TryGetValue(transactionId, out var transaction);
 
-        string json = JsonSerializer.Serialize(value, options);
+        return transaction;
+    }
 
-        var outValue = JsonSerializer.Deserialize<TValue>(json, options);
+    internal Transaction<TValue> CreateTransaction(string transactionId)
+    {
+        var snapshot = new Dictionary<string, TValue>();
 
-        return outValue is not null
-            ? Result.Success(outValue)
-            : Result.Failure<TValue>("Error while cloning value");
+        foreach (var (key, value) in _dictionary)
+        {
+            snapshot.Add(key, DeepCloneValue(value));
+        }
+
+        _transactions.TryAdd(transactionId, new Transaction<TValue>(transactionId, _logger, new ConcurrentDictionary<string, TValue>(snapshot)));
+
+        return _transactions[transactionId];
+    }
+
+    private TValue DeepCloneValue(TValue value)
+    {
+        return Serializer.DeserializeFromBytes<TValue>(Serializer.SerializeToBytes(value));
+    }
+
+    public int Count()
+    {
+        return _dictionary.Count;
     }
 }

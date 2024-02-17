@@ -1,13 +1,17 @@
 ﻿namespace Collections.Isolated.Abstractions;
 
-public interface IDictionaryContext<TKey, TValue>
-    where TKey : notnull 
+public interface IDictionaryContext<TValue>
     where TValue : class
 {
-    Task AddOrUpdateAsync(TKey key, TValue value);
-    Task AddOrUpdateRange(IEnumerable<(TKey key, TValue value)> items);
-    Task RemoveAsync(TKey key);
-    Task<TValue?> TryGetAsync(TKey key);
-    Task<List<TValue>> QueryAsync(Func<IEnumerable<TValue>, IEnumerable<TValue>> filter);
+    void AddOrUpdate(string key, TValue value);
+
+    void AddOrUpdateRange(IEnumerable<(string key, TValue value)> items);
+
+    void Remove(string key);
+
+    int Count();
+
+    TValue? TryGet(string key);
+
     Task SaveChangesAsync();
 }

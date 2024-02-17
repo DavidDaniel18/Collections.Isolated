@@ -1,13 +1,11 @@
 ﻿namespace Collections.Isolated.ValueObjects.Query;
 
-public sealed class QueryKey<TKey, TValue> : ReadOperation<TKey, TValue>
-    where TValue : class
-    where TKey : notnull
+internal sealed record QueryKey : ReadOperation
 {
-    public QueryKey(TKey key)
+    internal QueryKey(string key)
     {
         Key = key;
     }
 
-    public TKey Key { get; set; }
+    internal string Key { get; set; }
 }

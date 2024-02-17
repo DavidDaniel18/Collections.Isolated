@@ -5,12 +5,11 @@ namespace Collections.Isolated.Registration;
 
 public sealed class IsolatedDictionaryConfigurator(IServiceCollection collection) : IIsolatedDictionaryConfigurator
 {
-    public void AddStore<TKey, TValue>() 
-        where TKey : notnull 
+    public void AddStore<TValue>() 
         where TValue : class 
     {
-        collection.AddSingleton<IsolatedDictionary<TKey, TValue>>();
+        collection.AddSingleton<IsolatedDictionary<TValue>>();
 
-        collection.AddScoped<IDictionaryContext<TKey, TValue>, DictionaryContext<TKey, TValue>>();
+        collection.AddScoped<IDictionaryContext<TValue>, DictionaryContext<TValue>>();
     }
 }

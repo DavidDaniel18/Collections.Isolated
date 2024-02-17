@@ -26,8 +26,8 @@ public sealed class IntegrationWebApplicationFactory(IntegrationWebApplicationFa
 
                 services.AddIsolatedCollections(configurator =>
                 {
-                    configurator.AddStore<string, string>();
-                    configurator.AddStore<string, IsolatedDictionaryTests.HeapAllocation>();
+                    configurator.AddStore<string>();
+                    configurator.AddStore<IsolatedDictionaryTests.HeapAllocation>();
                 });
 
             })

@@ -2,7 +2,6 @@
 
 public interface IIsolatedDictionaryConfigurator
 {
-    void AddStore<TKey, TValue>()
-        where TKey : notnull 
+    void AddStore<TValue>()
         where TValue : class;
 }
