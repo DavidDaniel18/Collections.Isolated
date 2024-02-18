@@ -3,15 +3,15 @@
 public interface IDictionaryContext<TValue>
     where TValue : class
 {
-    void AddOrUpdate(string key, TValue value);
+    Task AddOrUpdateAsync(string key, TValue value);
 
-    void AddOrUpdateRange(IEnumerable<(string key, TValue value)> items);
+    Task AddOrUpdateRangeAsync(IEnumerable<(string key, TValue value)> items);
 
-    void Remove(string key);
+    Task RemoveAsync(string key);
 
     int Count();
 
-    TValue? TryGet(string key);
+    Task<TValue?> TryGetAsync(string key);
 
     Task SaveChangesAsync();
 }

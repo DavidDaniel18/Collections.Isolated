@@ -1,11 +1,38 @@
 ﻿using System.Collections.Concurrent;
+using Collections.Isolated.Serialization;
 
 namespace Collections.Isolated.ValueObjects.Commands;
 
-internal sealed record AddOrUpdate<TValue>(string Key, TValue Value) : WriteOperation<TValue>(Key) where TValue : class
+internal sealed record AddOrUpdate<TValue> : WriteOperation<TValue> where TValue : class
 {
+    internal Lazy<TValue> LazyValue { get; private set; }
+
+    internal AddOrUpdate(string key, TValue value, DateTime creationTime) : base(key, creationTime)
+    {
+        LazyValue = new(() => value);
+
+        _ = LazyValue.Value;
+    }
+
+    private AddOrUpdate(string key, Lazy<TValue> lazyValue, DateTime creationTime) : base(key, creationTime)
+    {
+        LazyValue = lazyValue;
+    }
+
     internal override void Apply(ConcurrentDictionary<string, TValue> dictionary)
     {
-        dictionary[Key] =  Value;
+        dictionary[Key] =  LazyValue.Value;
+    }
+
+    internal override WriteOperation<TValue> LazyDeepCloneValue(DateTime dateTime)
+    {
+        if (Serializer.IsPrimitiveOrSpecialType<TValue>())
+        {
+            return new AddOrUpdate<TValue>(Key, LazyValue.Value, dateTime);
+        }
+
+        var lazyValue = new Lazy<TValue>(() => Serializer.DeserializeFromBytes<TValue>(Serializer.SerializeToBytes(LazyValue)));
+
+        return new AddOrUpdate<TValue>(Key, lazyValue, dateTime);
     }
 }

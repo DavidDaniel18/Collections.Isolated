@@ -1,16 +1,14 @@
 ﻿using Collections.Isolated.Abstractions;
-using Collections.Isolated.Registration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Collections.Isolated;
 
 public static class ServiceRegistration
 {
-    public static IServiceCollection AddIsolatedCollections(this IServiceCollection collection, Action<IIsolatedDictionaryConfigurator> syncStoreConfigure)
+    public static IServiceCollection AddIsolatedCollections(this IServiceCollection collection)
     {
-        var configuration = new IsolatedDictionaryConfigurator(collection);
-
-        syncStoreConfigure.Invoke(configuration);
+        collection.AddSingleton(typeof(IsolatedDictionary<>));
+        collection.AddScoped(typeof(IDictionaryContext<>), typeof(DictionaryContext<>));
 
         return collection;
     }

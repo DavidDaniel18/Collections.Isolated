@@ -24,12 +24,7 @@ public sealed class IntegrationWebApplicationFactory(IntegrationWebApplicationFa
             {
                 services.AddSingleton(outputHelper);
 
-                services.AddIsolatedCollections(configurator =>
-                {
-                    configurator.AddStore<string>();
-                    configurator.AddStore<IsolatedDictionaryTests.HeapAllocation>();
-                });
-
+                services.AddIsolatedCollections();
             })
             .ConfigureLogging(loggingBuilder =>
             {

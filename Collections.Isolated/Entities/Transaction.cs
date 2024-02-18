@@ -1,7 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using Collections.Isolated.ValueObjects.Commands;
-using Collections.Isolated.ValueObjects.Query;
 using Microsoft.Extensions.Logging;
 
 namespace Collections.Isolated.Entities;
@@ -15,38 +14,29 @@ internal sealed class Transaction<TValue> where TValue : class
     private readonly SemaphoreSlim _operationsSemaphore = new(1, 1);
 
     //we compress the log to only show applied values
-    private ConcurrentDictionary<string, WriteOperation<TValue>> Operations { get; set; } = new();
-
-    private readonly SemaphoreSlim _keySemaphore = new(1, 1);
-
-    private ImmutableHashSet<string> _lockedKeys = ImmutableHashSet<string>.Empty;
+    private Dictionary<string, WriteOperation<TValue>> Operations { get; set; } = new();
 
     private readonly ConcurrentDictionary<string, TValue> _snapshot;
 
-    public Transaction(string id, ILogger logger, ConcurrentDictionary<string, TValue> snapshot)
+    public readonly DateTime CreationTime;
+
+    internal Transaction(string id, ILogger logger, ConcurrentDictionary<string, TValue> snapshot, DateTime creationTime)
     {
         _logger = logger;
         Id = id;
         _snapshot = snapshot;
+        CreationTime = creationTime;
     }
 
-    public void AddReadOperation(ReadOperation readOperation)
-    {
-        UnlockKeysOnRead(readOperation);
-    }
-
-    public void AddWriteOperation(WriteOperation<TValue> writeOperation)
+    internal void AddOrUpdateOperation(string key, TValue value)
     {
         try
         {
+            var writeOperation = new AddOrUpdate<TValue>(key, value, DateTime.UtcNow);
+
             _operationsSemaphore.Wait();
 
-            if (Operations.ContainsKey(writeOperation.Key))
-            {
-                Operations.TryRemove(writeOperation.Key, out _);
-            }
-
-            Operations[writeOperation.Key] = writeOperation;
+            AddWriteOperationUnsafe(writeOperation);
         }
         finally
         {
@@ -54,22 +44,27 @@ internal sealed class Transaction<TValue> where TValue : class
         }
     }
 
-    private void UnlockKeysOnRead(ReadOperation readOperation)
+    public void AddOrUpdateBatchOperation(IEnumerable<(string key, TValue value)> items)
+    {
+        foreach (var (key, value) in items)
+        {
+            AddOrUpdateOperation(key, value);
+        }
+    }
+
+    public void AddRemoveOperation(string key)
     {
         try
         {
-            _keySemaphore.Wait();
+            var writeOperation = new Remove<TValue>(key, DateTime.UtcNow);
 
-            _lockedKeys = readOperation switch
-            {
-                QueryKey queryKey when _lockedKeys.Contains(queryKey.Key) => _lockedKeys.Remove(queryKey.Key),
-                QueryAll => _lockedKeys.Clear(),
-                _ => _lockedKeys
-            };
+            _operationsSemaphore.Wait();
+
+            AddWriteOperationUnsafe(writeOperation);
         }
         finally
         {
-            _keySemaphore.Release();
+            _operationsSemaphore.Release();
         }
     }
 
@@ -81,10 +76,7 @@ internal sealed class Transaction<TValue> where TValue : class
         {
             _operationsSemaphore.Wait();
 
-            foreach (var operation in Operations.Values)
-            {
-                operation.Apply(store);
-            }
+            ApplyChangesUnsafe(store);
         }
         catch
         {
@@ -97,7 +89,7 @@ internal sealed class Transaction<TValue> where TValue : class
         }
     }
 
-    public void Clear()
+    internal void Clear()
     {
         try
         {
@@ -112,63 +104,53 @@ internal sealed class Transaction<TValue> where TValue : class
         }
     }
 
-    public TValue? Get(string key)
+    internal TValue? Get(string key)
     {
         if (Operations.TryGetValue(key, out var operation) && operation is AddOrUpdate<TValue> addOrUpdate)
         {
-            return addOrUpdate.Value;
+            return addOrUpdate.LazyValue.Value;
         }
 
         return _snapshot.GetValueOrDefault(key);
     }
 
-    public HashSet<WriteOperation<TValue>> GetOperations()
-    {
-        return [..Operations.Values];
-    }
-
-    public async Task Sync(HashSet<WriteOperation<TValue>> operationsToProcess)
-    {
-        try
-        {
-            await _keySemaphore.WaitAsync();
-
-            foreach (var operation in operationsToProcess)
-            {
-                _lockedKeys = _lockedKeys.Add(operation.Key);
-
-                AddWriteOperation(operation);
-            }
-
-            Apply(_snapshot);
-        }
-        finally
-        {
-            _keySemaphore.Release();
-        }
-    }
-
-    public bool AnyConflictingLockedKeys()
-    {
-        var intersected = _lockedKeys.Intersect(Operations.Select(op => op.Key)).Count > 0;
-
-        return intersected;
-    }
-
-    public void RollBackConflictingKeys()
+    internal List<WriteOperation<TValue>> GetOperations()
     {
         try
         {
             _operationsSemaphore.Wait();
 
-            foreach (var key in _lockedKeys)
-            {
-                Operations.TryRemove(key, out _);
-            }
+            return [.. Operations.Values];
         }
         finally
         {
             _operationsSemaphore.Release();
+        }
+    }
+
+    internal void LazySync(IEnumerable<WriteOperation<TValue>> operationsToProcess)
+    {
+        foreach (var operation in operationsToProcess.Where(operation => CreationTime < operation.DateTime))
+        {
+            AddWriteOperationUnsafe(operation.LazyDeepCloneValue(CreationTime));
+        }
+    }
+
+    private void AddWriteOperationUnsafe(WriteOperation<TValue> writeOperation)
+    {
+        if(writeOperation is Remove<TValue> removeOperation)
+            removeOperation.Apply(_snapshot);
+
+        Operations.Remove(writeOperation.Key);
+
+        Operations[writeOperation.Key] = writeOperation;
+    }
+
+    private void ApplyChangesUnsafe(ConcurrentDictionary<string, TValue> store)
+    {
+        foreach (var operation in Operations.Values)
+        {
+            operation.Apply(store);
         }
     }
 }

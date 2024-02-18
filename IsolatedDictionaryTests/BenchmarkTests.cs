@@ -27,7 +27,7 @@ public sealed class BenchmarkTests : IntegrationTest
 
         // Test custom dictionary add
         stopwatch.Start();
-        customDictionary.AddOrUpdate("key", "value");
+        customDictionary.AddOrUpdateAsync("key", "value");
         stopwatch.Stop();
         var customAddTime = stopwatch.ElapsedTicks;
 
@@ -55,7 +55,7 @@ public sealed class BenchmarkTests : IntegrationTest
 
         // Test custom dictionary add
         stopwatch.Start();
-        customDictionary.AddOrUpdate("key", "value");
+        customDictionary.AddOrUpdateAsync("key", "value");
         stopwatch.Stop();
         var customAddTime = stopwatch.ElapsedTicks;
 
@@ -74,7 +74,7 @@ public sealed class BenchmarkTests : IntegrationTest
     }
 
     [Fact]
-    public void CompareGetPerformanceAsync()
+    public async Task CompareGetPerformanceAsync()
     {
         var logger = Scope.ServiceProvider.GetRequiredService<ILogger<DictionaryContext<string>>>();
         var customDictionary = Scope.ServiceProvider.GetService<IDictionaryContext<string>>();
@@ -82,12 +82,12 @@ public sealed class BenchmarkTests : IntegrationTest
         var stopwatch = new Stopwatch();
 
         // Prepare - ensure both dictionaries have the item to retrieve
-        customDictionary.AddOrUpdate("key", "value");
-        customDictionary.SaveChangesAsync().Wait();
+        await customDictionary.AddOrUpdateAsync("key", "value");
+        await customDictionary.SaveChangesAsync();
 
         // Test custom dictionary get
         stopwatch.Restart();
-        customDictionary.TryGet("key");
+        await customDictionary.TryGetAsync("key");
         stopwatch.Stop();
         var customGetTime = stopwatch.ElapsedTicks;
 
@@ -106,7 +106,7 @@ public sealed class BenchmarkTests : IntegrationTest
     }
 
     [Fact]
-    public void CompareGetPerformanceAsync_concurrentdict()
+    public async Task CompareGetPerformanceAsync_concurrentdict()
     {
         var logger = Scope.ServiceProvider.GetRequiredService<ILogger<DictionaryContext<string>>>();
         var customDictionary = Scope.ServiceProvider.GetService<IDictionaryContext<string>>();
@@ -114,13 +114,13 @@ public sealed class BenchmarkTests : IntegrationTest
         var stopwatch = new Stopwatch();
 
         // Prepare - ensure both dictionaries have the item to retrieve
-        customDictionary.AddOrUpdate("key", "value");
-        customDictionary.SaveChangesAsync().Wait();
+        await customDictionary.AddOrUpdateAsync("key", "value");
+        await customDictionary.SaveChangesAsync();
         standardDictionary.TryAdd("key", "value");
 
         // Test custom dictionary get
         stopwatch.Restart();
-        customDictionary.TryGet("key");
+        await customDictionary.TryGetAsync("key");
         stopwatch.Stop();
         var customGetTime = stopwatch.ElapsedTicks;
 

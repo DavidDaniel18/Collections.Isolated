@@ -1,13 +1,14 @@
 ﻿using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using Collections.Isolated.Entities;
 using Collections.Isolated.Serialization;
 using Collections.Isolated.ValueObjects.Commands;
-using Collections.Isolated.ValueObjects.Query;
 using Microsoft.Extensions.Logging;
 
 namespace Collections.Isolated;
 
-public sealed class IsolatedDictionary<TValue> where TValue : class 
+public sealed class IsolatedDictionary<TValue> where TValue : class
 {
     private readonly ILogger<IsolatedDictionary<TValue>> _logger;
 
@@ -15,84 +16,88 @@ public sealed class IsolatedDictionary<TValue> where TValue : class
 
     private readonly ConcurrentDictionary<string, Transaction<TValue>> _transactions = new();
 
-    private readonly ConcurrentBag<string> _processedTransactions = new();
+    private readonly ConcurrentQueue<string> _transactionLockIds = new();
 
-    private readonly SemaphoreSlim _semaphore = new(1, 1);
+    private readonly HashSet<string> _transactionsLocks = new();
+
+    private readonly List<WriteOperation<TValue>> _log = new();
+
+    private string _currentTransactionId = string.Empty;
+
+    private readonly SemaphoreSlim _semaphoreSlim = new(1, 1);
+
+    private DateTime _lastSync = DateTime.UtcNow;
 
     public IsolatedDictionary(ILogger<IsolatedDictionary<TValue>> logger)
     {
         _logger = logger;
     }
 
-    internal TValue? Get(string key, string transactionId)
+    internal async Task<TValue?> GetAsync(string key, string transactionId)
     {
-        var transaction = GetOrCreateTransaction(transactionId);
-
-        transaction.AddReadOperation(new QueryKey(key));
+        var transaction = await PrepareAction(transactionId);
 
         return transaction.Get(key);
     }
 
-    internal void ApplyOperationAsync(WriteOperation<TValue> operation, string transactionId)
+    internal async Task AddOrUpdateAsync(string key, TValue value, string transactionId)
     {
-        try
-        {
-            var transaction = GetTransaction(transactionId) ?? CreateTransaction(transactionId);
+        var transaction = await PrepareAction(transactionId);
 
-            transaction.AddWriteOperation(operation);
-        }
-        catch (Exception)
-        {
-            _transactions.TryRemove(transactionId, out _);
-            throw;
-        }
+        transaction.AddOrUpdateOperation(key, value);
+    }
+
+    internal async Task RemoveAsync(string key, string transactionId)
+    {
+        var transaction = await PrepareAction(transactionId);
+
+        transaction.AddRemoveOperation(key);
+    }
+
+    internal async Task BatchApplyOperationAsync(IEnumerable<(string key, TValue value)> items, string transactionId)
+    {
+        var transaction = await PrepareAction(transactionId);
+
+        transaction.AddOrUpdateBatchOperation(items);
     }
 
     internal async Task SaveChangesAsync(string transactionId)
     {
+        var transaction = GetTransaction(transactionId);
+
+        if (transaction is null)
+        {
+            throw new InvalidOperationException("Transaction not found");
+        }
+
+        await AttemptLockAcquisition(transactionId);
+
         try
         {
-            await _semaphore.WaitAsync();
+            var operationsToProcess = transaction.GetOperations();
 
-            var transaction = GetTransaction(transactionId);
-
-            if (transaction is null)
+            if (operationsToProcess.Count == 0)
             {
-                throw new InvalidOperationException("Transaction not found");
+                return;
             }
 
-            if (transaction.AnyConflictingLockedKeys())
-            {
-                transaction.RollBackConflictingKeys();
+            _lastSync = operationsToProcess[-0].DateTime;
 
-                throw new InvalidOperationException("Transaction has conflicting locked keys");
-            }
-
-            transaction.Apply(_dictionary);
-
-            _processedTransactions.Add(transactionId);
-
-            _transactions.Remove(transactionId, out _);
-
-            var transactionsToProcess = transaction.GetOperations();
-
-            transactionsToProcess = transactionsToProcess.ToList().ConvertAll(operation =>
-            {
-                if (operation is AddOrUpdate<TValue> addOrUpdate)
-                {
-                    return new AddOrUpdate<TValue>(addOrUpdate.Key, DeepCloneValue(addOrUpdate.Value));
-                }
-
-                return operation;
-            }).ToHashSet();
-
-            await Parallel.ForEachAsync(_transactions, async (pair, _) => await pair.Value.Sync(transactionsToProcess));
+            _log.AddRange(operationsToProcess);
         }
         finally
         {
-            _semaphore.Release();
-        }
+            _currentTransactionId = string.Empty;
 
+            _transactions.Remove(transactionId, out _);
+
+            transaction.Apply(_dictionary);
+        }
+    }
+
+    internal int Count()
+    {
+        return _dictionary.Count;
     }
 
     internal void UndoChanges(string transactionId)
@@ -115,7 +120,7 @@ public sealed class IsolatedDictionary<TValue> where TValue : class
         return transaction;
     }
 
-    internal Transaction<TValue> CreateTransaction(string transactionId)
+    private Transaction<TValue> CreateTransaction(string transactionId)
     {
         var snapshot = new Dictionary<string, TValue>();
 
@@ -124,18 +129,72 @@ public sealed class IsolatedDictionary<TValue> where TValue : class
             snapshot.Add(key, DeepCloneValue(value));
         }
 
-        _transactions.TryAdd(transactionId, new Transaction<TValue>(transactionId, _logger, new ConcurrentDictionary<string, TValue>(snapshot)));
+        _transactions.TryAdd(transactionId, new Transaction<TValue>(transactionId, _logger, new ConcurrentDictionary<string, TValue>(snapshot), _lastSync));
 
         return _transactions[transactionId];
     }
 
+    private async ValueTask AttemptLockAcquisition(string transactionId)
+    {
+        if (_currentTransactionId.Equals(transactionId)) return;
+
+        while (_currentTransactionId.Equals(transactionId) is false)
+        {
+            try
+            {
+                await _semaphoreSlim.WaitAsync().ConfigureAwait(false);
+
+                if (_transactionsLocks.Add(transactionId))
+                {
+                    _transactionLockIds.Enqueue(transactionId);
+                }
+
+                if (_transactionLockIds.TryPeek(out var lockId))
+                {
+                    if (Interlocked.CompareExchange(ref _currentTransactionId, lockId, string.Empty).Equals(lockId) is false)
+                    {
+                        _transactionLockIds.TryDequeue(out _);
+
+                        _transactionsLocks.Remove(lockId);
+                    }
+                }
+
+                if (_currentTransactionId.Equals(transactionId))
+                {
+                    return;
+                }
+            }
+            finally
+            {
+                _semaphoreSlim.Release();
+
+                await Task.Yield();
+            }
+        }
+    }
+
     private TValue DeepCloneValue(TValue value)
     {
+        if(Serializer.IsPrimitiveOrSpecialType<TValue>()) return value;
+
         return Serializer.DeserializeFromBytes<TValue>(Serializer.SerializeToBytes(value));
     }
 
-    public int Count()
+    private async Task<Transaction<TValue>> PrepareAction(string transactionId)
     {
-        return _dictionary.Count;
+        var transaction = GetOrCreateTransaction(transactionId);
+
+        await AttemptLockAcquisition(transactionId);
+
+        SyncLog(transaction);
+
+        return transaction;
+    }
+
+    private void SyncLog(Transaction<TValue> transaction)
+    {
+        var newLog= _log.TakeWhile(op => transaction.CreationTime < op.DateTime);
+
+        transaction.LazySync(newLog);
     }
 }

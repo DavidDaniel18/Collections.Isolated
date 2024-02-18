@@ -15,4 +15,11 @@ internal static class Serializer
     {
         return MessagePackSerializer.Deserialize<T>(data, Options);
     }
+
+    internal static bool IsPrimitiveOrSpecialType<T>()
+    {
+        Type type = typeof(T);
+        return type.IsPrimitive || type == typeof(string) || type == typeof(decimal);
+    }
+
 }
