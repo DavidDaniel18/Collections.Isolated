@@ -6,8 +6,8 @@ public class IsolationScheduler
     private readonly PriorityQueue<Action, int> _taskQueue = new();
     private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.SupportsRecursion);
     private readonly SemaphoreSlim _semaphore = new(0);
-    internal Action? _currentAction;
-    private Task _processingTask;
+    private Action? _currentAction;
+    private readonly Task _processingTask;
     private bool _isProcessing = true;
     private bool _canAdd = true;
 
@@ -31,7 +31,7 @@ public class IsolationScheduler
 
         try
         {
-            _lock.EnterWriteLock();
+            EnterWriteLock();
 
             _taskQueue.Enqueue(task, (int)priority);
 
@@ -59,8 +59,8 @@ public class IsolationScheduler
 
                 try
                 {
-                    _lock.EnterWriteLock();
-
+                    EnterWriteLock();
+                    
                     if (_taskQueue.TryDequeue(out _currentAction, out _) is false)
                     {
                         continue;
@@ -93,7 +93,7 @@ public class IsolationScheduler
         {
             try
             {
-                _lock.EnterReadLock();
+                EnterReadLock();
 
                 if (_currentAction == null && (_taskQueue.TryPeek(out _, out var priority) is false || priority > 0))
                 {
@@ -116,6 +116,8 @@ public class IsolationScheduler
     {
         _isProcessing = false;
 
+        WaitForCompletionAsync();
+
         _semaphore.Release();
     }
 
@@ -124,5 +126,15 @@ public class IsolationScheduler
         Low = 2,
         Medium = 1,
         High = 0
+    }
+
+    private void EnterReadLock()
+    {
+        if (_lock.TryEnterReadLock(100) is false) throw new TimeoutException("Could not acquire read lock");
+    }
+
+    private void EnterWriteLock()
+    {
+        if (_lock.TryEnterWriteLock(100) is false) throw new TimeoutException("Could not acquire read lock");
     }
 }

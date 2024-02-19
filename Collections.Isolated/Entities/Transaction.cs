@@ -14,7 +14,7 @@ internal sealed class Transaction<TValue> where TValue : class
 
     private readonly DateTime _creationTime;
 
-    internal readonly IsolationScheduler _scheduler;
+    private readonly IsolationScheduler _scheduler;
 
     private readonly ReaderWriterLockSlim _operationsSemaphore = new(LockRecursionPolicy.NoRecursion);
 
@@ -38,7 +38,7 @@ internal sealed class Transaction<TValue> where TValue : class
         {
             try
             {
-                _operationsSemaphore.EnterWriteLock();
+                OperationEnterWriteLock();
 
                 AddWriteOperationUnsafe(writeOperation);
             }
@@ -58,7 +58,7 @@ internal sealed class Transaction<TValue> where TValue : class
         {
             try
             {
-                _operationsSemaphore.EnterWriteLock();
+                OperationEnterWriteLock();
 
                 foreach (var writeOperation in writeOperations)
                 {
@@ -81,7 +81,7 @@ internal sealed class Transaction<TValue> where TValue : class
         {
             try
             {
-                _operationsSemaphore.EnterWriteLock();
+                OperationEnterWriteLock();
 
                 AddWriteOperationUnsafe(removeOperation);
             }
@@ -100,7 +100,7 @@ internal sealed class Transaction<TValue> where TValue : class
         {
             try
             {
-                _snapshotSemaphore.EnterWriteLock();
+                SnapshotEnterWriteLock();
 
                 ApplyChangesUnsafe(Snapshot);
             }
@@ -147,7 +147,20 @@ internal sealed class Transaction<TValue> where TValue : class
 
     internal void Clear()
     {
-        _scheduler.Schedule(() => Operations.Clear(), IsolationScheduler.Priority.High);
+        _scheduler.Schedule(() =>
+        {
+            try
+            {
+                OperationEnterWriteLock();
+
+                Operations.Clear();
+            }
+            finally
+            {
+                _operationsSemaphore.ExitWriteLock();
+            }
+
+        }, IsolationScheduler.Priority.High);
     }
 
     internal TValue? Get(string key)
@@ -158,7 +171,7 @@ internal sealed class Transaction<TValue> where TValue : class
         {
             try
             {
-                _operationsSemaphore.EnterReadLock();
+                OperationEnterReadLock();
 
                 if (Operations.TryGetValue(key, out var operation) && operation is AddOrUpdate<TValue> addOrUpdate)
                 {
@@ -174,7 +187,7 @@ internal sealed class Transaction<TValue> where TValue : class
 
             try
             {
-                _snapshotSemaphore.EnterReadLock();
+                SnapshotEnterReadLock();
 
                 taskCompletionSource.SetResult(Snapshot.GetValueOrDefault(key));
             }
@@ -195,7 +208,7 @@ internal sealed class Transaction<TValue> where TValue : class
         {
             try
             {
-                _operationsSemaphore.EnterReadLock();
+                OperationEnterReadLock();
 
                 taskCompletionSource.SetResult(Operations);
             }
@@ -210,32 +223,32 @@ internal sealed class Transaction<TValue> where TValue : class
 
     internal void LazySync(Dictionary<string, WriteOperation<TValue>> operationsToProcess, DateTime commitTime)
     {
-        var newOperations = operationsToProcess.Where(op =>
-        {
-
-            if (Operations.TryGetValue(op.Key, out var persistedOperation))
-            {
-                var persistedTicks = persistedOperation.DateTime.Ticks;
-
-                var operationTicks = op.Value.DateTime.Ticks;
-
-                // we only want to apply operations that are newer than the persisted ones
-                return operationTicks > persistedTicks;
-            }
-
-            var transactionTicks = _creationTime.Ticks;
-
-            var commitTicks = commitTime.Ticks;
-            
-            // we only want to apply operations that are newer than the transaction
-            return commitTicks > transactionTicks;
-        }).ToList();
-
         _scheduler.Schedule(() =>
         {
             try
             {
                 _operationsSemaphore.EnterWriteLock();
+
+                var newOperations = operationsToProcess.Where(op =>
+                {
+
+                    if (Operations.TryGetValue(op.Key, out var persistedOperation))
+                    {
+                        var persistedTicks = persistedOperation.DateTime.Ticks;
+
+                        var operationTicks = op.Value.DateTime.Ticks;
+
+                        // we only want to apply operations that are newer than the persisted ones
+                        return operationTicks > persistedTicks;
+                    }
+
+                    var transactionTicks = _creationTime.Ticks;
+
+                    var commitTicks = commitTime.Ticks;
+
+                    // we only want to apply operations that are newer than the transaction
+                    return commitTicks > transactionTicks;
+                }).ToList();
 
                 foreach (var operation in newOperations)
                 {
@@ -269,5 +282,25 @@ internal sealed class Transaction<TValue> where TValue : class
         _scheduler.WaitForCompletionAsync();
         _scheduler.StopProcessing();
         _cancellationTokenSource.Cancel();
+    }
+
+    private void OperationEnterReadLock()
+    {
+        if (_operationsSemaphore.TryEnterReadLock(100) is false) throw new TimeoutException("Could not acquire read lock");
+    }
+
+    private void OperationEnterWriteLock()
+    {
+        if (_operationsSemaphore.TryEnterWriteLock(100) is false) throw new TimeoutException("Could not acquire read lock");
+    }
+
+    private void SnapshotEnterReadLock()
+    {
+        if (_snapshotSemaphore.TryEnterReadLock(100) is false) throw new TimeoutException("Could not acquire read lock");
+    }
+
+    private void SnapshotEnterWriteLock()
+    {
+        if (_snapshotSemaphore.TryEnterWriteLock(100) is false) throw new TimeoutException("Could not acquire read lock");
     }
 }

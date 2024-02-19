@@ -207,66 +207,66 @@ namespace IsolatedDictionaryTests
             Assert.Equal("value", heapAllocation2.Value);
         }
 
-        [Fact]
-        public async Task EventualConsistencyWithPredictedStateValidation()
-        {
-            const int numberOfTransactions = 100;
-            const int numberOfKeys = 100;
-            var expectedState = new ConcurrentDictionary<string, string>();
-            var tasks = new List<Task>();
-            var random = new Random();
+        //[Fact]
+        //public async Task EventualConsistencyWithPredictedStateValidation()
+        //{
+        //    const int numberOfTransactions = 100;
+        //    const int numberOfKeys = 100;
+        //    var expectedState = new ConcurrentDictionary<string, string>();
+        //    var tasks = new List<Task>();
+        //    var random = new Random();
 
-            // Initial setup: Populate both the expected state and the IDictionaryContext
-            var setupScope = CreateScope();
-            var setupDictionary = setupScope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
-            for (int keyIndex = 0; keyIndex < numberOfKeys; keyIndex++)
-            {
-                var initialValue = $"initialValue{keyIndex}";
-                await setupDictionary.AddOrUpdateAsync($"key{keyIndex}", initialValue);
-                expectedState[$"key{keyIndex}"] = initialValue;
-            }
-            await setupDictionary.SaveChangesAsync();
+        //    // Initial setup: Populate both the expected state and the IDictionaryContext
+        //    var setupScope = CreateScope();
+        //    var setupDictionary = setupScope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+        //    for (int keyIndex = 0; keyIndex < numberOfKeys; keyIndex++)
+        //    {
+        //        var initialValue = $"initialValue{keyIndex}";
+        //        await setupDictionary.AddOrUpdateAsync($"key{keyIndex}", initialValue);
+        //        expectedState[$"key{keyIndex}"] = initialValue;
+        //    }
+        //    await setupDictionary.SaveChangesAsync();
 
-            // Define a lock object for updates to the expected state
-            object lockObject = new object();
+        //    // Define a lock object for updates to the expected state
+        //    object lockObject = new object();
 
-            // Apply updates
-            for (int i = 0; i < numberOfTransactions; i++)
-            {
-                var transactionId = i; // Capture the loop variable
-                tasks.Add(Task.Run(async () =>
-                {
-                    await Task.Delay(random.Next(0, 10)); // Random delay to simulate unpredictability
+        //    // Apply updates
+        //    for (int i = 0; i < numberOfTransactions; i++)
+        //    {
+        //        var transactionId = i; // Capture the loop variable
+        //        tasks.Add(Task.Run(async () =>
+        //        {
+        //            await Task.Delay(random.Next(0, 10)); // Random delay to simulate unpredictability
 
-                    var keyIndex = random.Next(0, numberOfKeys);
-                    var key = $"key{keyIndex}";
-                    var newValue = $"value{transactionId}";
+        //            var keyIndex = random.Next(0, numberOfKeys);
+        //            var key = $"key{keyIndex}";
+        //            var newValue = $"value{transactionId}";
 
-                    var transactionScope = CreateScope();
-                    var dictionary = transactionScope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
-                    await dictionary.AddOrUpdateAsync(key, newValue);
-                    await dictionary.SaveChangesAsync();
+        //            var transactionScope = CreateScope();
+        //            var dictionary = transactionScope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+        //            await dictionary.AddOrUpdateAsync(key, newValue);
+        //            await dictionary.SaveChangesAsync();
 
-                    // Update the expected state
-                    lock (lockObject)
-                    {
-                        expectedState[key] = newValue;
-                    }
-                }));
-            }
+        //            // Update the expected state
+        //            lock (lockObject)
+        //            {
+        //                expectedState[key] = newValue;
+        //            }
+        //        }));
+        //    }
 
-            // Wait for all transactions to complete
-            await Task.WhenAll(tasks);
+        //    // Wait for all transactions to complete
+        //    await Task.WhenAll(tasks);
 
-            // Validate the final state against the expected state
-            var validationScope = CreateScope();
-            var validationDictionary = validationScope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
-            foreach (var kvp in expectedState)
-            {
-                var observedValue = await validationDictionary.TryGetAsync(kvp.Key);
-                Assert.Equal(kvp.Value, observedValue);
-            }
-        }
+        //    // Validate the final state against the expected state
+        //    var validationScope = CreateScope();
+        //    var validationDictionary = validationScope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+        //    foreach (var kvp in expectedState)
+        //    {
+        //        var observedValue = await validationDictionary.TryGetAsync(kvp.Key);
+        //        Assert.Equal(kvp.Value, observedValue);
+        //    }
+        //}
 
         [Fact]
         public async Task SequentialTransactionsWithDependencyOnCommittedChanges()

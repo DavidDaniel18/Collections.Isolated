@@ -8,7 +8,7 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
 {
     private ConcurrentDictionary<string, TValue> _dictionary = new();
 
-    internal readonly ConcurrentDictionary<string, Transaction<TValue>> _transactions = new();
+    private readonly ConcurrentDictionary<string, Transaction<TValue>> _transactions = new();
 
     internal void SaveChanges(Transaction<TValue> transaction)
     {

@@ -7,9 +7,7 @@ namespace Collections.Isolated.Synchronisation;
 public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue>
     where TValue : class
 {
-    private readonly ConcurrentQueue<string> _transactionLockIds = new();
-
-    internal readonly IsolatedDictionary<TValue> _dictionary = new();
+    private readonly IsolatedDictionary<TValue> _dictionary = new();
 
     private string _currentTransactionId = string.Empty;
 
@@ -17,12 +15,7 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue>
 
     private DateTime _lastLogTime = DateTime.UtcNow;
 
-    private readonly SelectiveRelease<TValue> _selectiveRelease;
-
-    public IsolationSync()
-    {
-        _selectiveRelease = new SelectiveRelease<TValue>(this);
-    }
+    private readonly SelectiveRelease _selectiveRelease = new();
 
     public async Task<TValue?> GetAsync(string key, string transactionId)
     {
@@ -41,18 +34,6 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue>
 
         return Task.CompletedTask;
     }
-
-    //private void LazyApplyTrailingUpdates()
-    //{
-    //    var transactions = _dictionary.GetTransactions();
-
-    //    transactions.Remove(_currentTransactionId);
-
-    //    foreach (var transaction in transactions.Values)
-    //    {
-    //        transaction.();
-    //    }
-    //}
 
     public Task RemoveAsync(string key, string transactionId)
     {
@@ -96,19 +77,21 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue>
 
         _log = operationsToProcess;
 
-        if (_transactionLockIds.TryDequeue(out var nextTransactionId))
-        {
-            _selectiveRelease.Release(nextTransactionId);
-        }
-        else
-        {
-            _currentTransactionId = string.Empty;
-        }
+        //if (_transactionLockIds.TryDequeue(out var nextTransactionId))
+        //{
+        //    _selectiveRelease.Release(nextTransactionId);
+        //}
+        //else
+        //{
+        //    _currentTransactionId = string.Empty;
+        //}
 
-        if (_transactionLockIds.Count > 0 && _currentTransactionId == string.Empty)
-        {
-            throw new InvalidOperationException("There are still transactions in the queue.");
-        }
+        //if (_transactionLockIds.Count > 0 && _currentTransactionId == string.Empty)
+        //{
+        //    throw new InvalidOperationException("There are still transactions in the queue.");
+        //}
+
+        _selectiveRelease.Release();
     }
 
     public async Task<int> CountAsync(string transactionId)
@@ -129,16 +112,18 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue>
     {
         if (_currentTransactionId.Equals(transactionId)) return;
 
-        // If the current transaction is the one that is trying to acquire the lock, then we need to wait for the lock to be released.
-        if (Interlocked.CompareExchange(ref _currentTransactionId, transactionId, string.Empty).Equals(transactionId)
-            || _currentTransactionId.Equals(transactionId) is false)
-        {
-            _transactionLockIds.Enqueue(transactionId);
+        //// If the current transaction is the one that is trying to acquire the lock, then we need to wait for the lock to be released.
+        //if (Interlocked.CompareExchange(ref _currentTransactionId, transactionId, string.Empty).Equals(transactionId)
+        //    || _currentTransactionId.Equals(transactionId) is false)
+        //{
+        //    _transactionLockIds.Enqueue(transactionId);
 
-            await _selectiveRelease.WaitAsync(transactionId);
+        //    await _selectiveRelease.WaitAsync(transactionId);
 
-            _currentTransactionId = transactionId;
-        }
+        //    _currentTransactionId = transactionId;
+        //}
+
+        await _selectiveRelease.WaitAsync(transactionId);
 
         LockAcquired(transactionId);
     }
