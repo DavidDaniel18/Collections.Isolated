@@ -1,5 +1,4 @@
-﻿using System.Collections.Concurrent;
-using Collections.Isolated.Serialization;
+﻿using Collections.Isolated.Serialization;
 
 namespace Collections.Isolated.ValueObjects.Commands;
 
@@ -19,20 +18,20 @@ internal sealed record AddOrUpdate<TValue> : WriteOperation<TValue> where TValue
         LazyValue = lazyValue;
     }
 
-    internal override void Apply(ConcurrentDictionary<string, TValue> dictionary)
+    internal override void Apply(IDictionary<string, TValue> dictionary)
     {
         dictionary[Key] =  LazyValue.Value;
     }
 
-    internal override WriteOperation<TValue> LazyDeepCloneValue(DateTime dateTime)
+    internal override WriteOperation<TValue> LazyDeepCloneValue()
     {
         if (Serializer.IsPrimitiveOrSpecialType<TValue>())
         {
-            return new AddOrUpdate<TValue>(Key, LazyValue.Value, dateTime);
+            return new AddOrUpdate<TValue>(Key, LazyValue.Value, DateTime);
         }
 
         var lazyValue = new Lazy<TValue>(() => Serializer.DeserializeFromBytes<TValue>(Serializer.SerializeToBytes(LazyValue)));
 
-        return new AddOrUpdate<TValue>(Key, lazyValue, dateTime);
+        return new AddOrUpdate<TValue>(Key, lazyValue, DateTime);
     }
 }

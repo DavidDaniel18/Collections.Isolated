@@ -1,4 +1,4 @@
-﻿using Collections.Isolated;
+﻿using Collections.Isolated.Registration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;

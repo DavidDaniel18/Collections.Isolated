@@ -19,8 +19,4 @@
     <ProjectReference Include="..\Collections.Isolated.Abstractions\Collections.Isolated.Abstractions.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Registration\" />
-  </ItemGroup>
-
 </Project>

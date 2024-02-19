@@ -9,7 +9,7 @@ public interface IDictionaryContext<TValue>
 
     Task RemoveAsync(string key);
 
-    int Count();
+    Task<int> CountAsync();
 
     Task<TValue?> TryGetAsync(string key);
 

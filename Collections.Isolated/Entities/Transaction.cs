@@ -1,156 +1,273 @@
-﻿using System.Collections.Concurrent;
-using System.Collections.Immutable;
+﻿using Collections.Isolated.Synchronisation;
 using Collections.Isolated.ValueObjects.Commands;
-using Microsoft.Extensions.Logging;
 
 namespace Collections.Isolated.Entities;
 
 internal sealed class Transaction<TValue> where TValue : class
 {
-    private readonly ILogger _logger;
-
-    private string Id { get; }
-
-    private readonly SemaphoreSlim _operationsSemaphore = new(1, 1);
+    public string Id { get; }
 
     //we compress the log to only show applied values
     private Dictionary<string, WriteOperation<TValue>> Operations { get; set; } = new();
 
-    private readonly ConcurrentDictionary<string, TValue> _snapshot;
+    internal readonly Dictionary<string, TValue> Snapshot;
 
-    public readonly DateTime CreationTime;
+    private readonly DateTime _creationTime;
 
-    internal Transaction(string id, ILogger logger, ConcurrentDictionary<string, TValue> snapshot, DateTime creationTime)
+    internal readonly IsolationScheduler _scheduler;
+
+    private readonly ReaderWriterLockSlim _operationsSemaphore = new(LockRecursionPolicy.NoRecursion);
+
+    private readonly ReaderWriterLockSlim _snapshotSemaphore = new(LockRecursionPolicy.NoRecursion);
+
+    private readonly CancellationTokenSource _cancellationTokenSource = new();
+
+    internal Transaction(string id, Dictionary<string, TValue> snapshot, DateTime creationTime)
     {
-        _logger = logger;
         Id = id;
-        _snapshot = snapshot;
-        CreationTime = creationTime;
+        Snapshot = snapshot;
+        _scheduler = new IsolationScheduler(_cancellationTokenSource);
+        _creationTime = creationTime;
     }
 
     internal void AddOrUpdateOperation(string key, TValue value)
     {
-        try
-        {
-            var writeOperation = new AddOrUpdate<TValue>(key, value, DateTime.UtcNow);
+        var writeOperation = new AddOrUpdate<TValue>(key, value, DateTime.UtcNow);
 
-            _operationsSemaphore.Wait();
-
-            AddWriteOperationUnsafe(writeOperation);
-        }
-        finally
+        _scheduler.Schedule(() =>
         {
-            _operationsSemaphore.Release();
-        }
+            try
+            {
+                _operationsSemaphore.EnterWriteLock();
+
+                AddWriteOperationUnsafe(writeOperation);
+            }
+            finally
+            {
+                _operationsSemaphore.ExitWriteLock();
+            }
+
+        }, IsolationScheduler.Priority.High);
     }
 
     public void AddOrUpdateBatchOperation(IEnumerable<(string key, TValue value)> items)
     {
-        foreach (var (key, value) in items)
+        var writeOperations = items.Select(item => new AddOrUpdate<TValue>(item.key, item.value, DateTime.UtcNow));
+
+        _scheduler.Schedule(() =>
         {
-            AddOrUpdateOperation(key, value);
-        }
+            try
+            {
+                _operationsSemaphore.EnterWriteLock();
+
+                foreach (var writeOperation in writeOperations)
+                {
+                    AddWriteOperationUnsafe(writeOperation);
+                }
+            }
+            finally
+            {
+                _operationsSemaphore.ExitWriteLock();
+            }
+          
+        }, IsolationScheduler.Priority.High);
     }
 
     public void AddRemoveOperation(string key)
     {
-        try
-        {
-            var writeOperation = new Remove<TValue>(key, DateTime.UtcNow);
+        var removeOperation = new Remove<TValue>(key, DateTime.UtcNow);
 
-            _operationsSemaphore.Wait();
-
-            AddWriteOperationUnsafe(writeOperation);
-        }
-        finally
+        _scheduler.Schedule(() =>
         {
-            _operationsSemaphore.Release();
-        }
+            try
+            {
+                _operationsSemaphore.EnterWriteLock();
+
+                AddWriteOperationUnsafe(removeOperation);
+            }
+            finally
+            {
+                _operationsSemaphore.ExitWriteLock();
+            }
+        }, IsolationScheduler.Priority.High);
     }
 
-    internal void Apply(ConcurrentDictionary<string, TValue> store)
+    internal void Apply()
     {
-        if (Operations.Any() is false) return;
+        if (Operations.Count == 0) return;
 
-        try
+        _scheduler.Schedule(() =>
         {
-            _operationsSemaphore.Wait();
+            try
+            {
+                _snapshotSemaphore.EnterWriteLock();
 
-            ApplyChangesUnsafe(store);
-        }
-        catch
+                ApplyChangesUnsafe(Snapshot);
+            }
+            finally
+            {
+                _snapshotSemaphore.ExitWriteLock();
+            }
+        }, IsolationScheduler.Priority.High);
+    }
+
+    public void ApplyOneOperation()
+    {
+        _scheduler.Schedule(() =>
         {
-            _logger.LogError("Error applying transaction {Id}", Id);
-            throw;
-        }
-        finally
-        {
-            _operationsSemaphore.Release();
-        }
+            try
+            {
+                _operationsSemaphore.EnterUpgradeableReadLock();
+
+                if (Operations.Count == 0) return;
+
+                try
+                {
+                    _snapshotSemaphore.EnterWriteLock();
+
+                    var operationsToProcess = Operations.Values.First();
+
+                    operationsToProcess.Apply(Snapshot);
+
+                    Operations.Remove(operationsToProcess.Key);
+                }
+                finally
+                {
+                    _snapshotSemaphore.ExitWriteLock();
+                }
+            }
+            finally
+            {
+                _operationsSemaphore.ExitUpgradeableReadLock();
+
+            }
+
+        }, IsolationScheduler.Priority.Medium);
     }
 
     internal void Clear()
     {
-        try
-        {
-            _operationsSemaphore.Wait();
-
-            Operations.Clear();
-            _snapshot.Clear();
-        }
-        finally
-        {
-            _operationsSemaphore.Release();
-        }
+        _scheduler.Schedule(() => Operations.Clear(), IsolationScheduler.Priority.High);
     }
 
     internal TValue? Get(string key)
     {
-        if (Operations.TryGetValue(key, out var operation) && operation is AddOrUpdate<TValue> addOrUpdate)
-        {
-            return addOrUpdate.LazyValue.Value;
-        }
+        var taskCompletionSource = new TaskCompletionSource<TValue?>();
 
-        return _snapshot.GetValueOrDefault(key);
+        _scheduler.Schedule(() =>
+        {
+            try
+            {
+                _operationsSemaphore.EnterReadLock();
+
+                if (Operations.TryGetValue(key, out var operation) && operation is AddOrUpdate<TValue> addOrUpdate)
+                {
+                    taskCompletionSource.SetResult(addOrUpdate.LazyValue.Value);
+
+                    return;
+                }
+            }
+            finally
+            {
+                _operationsSemaphore.ExitReadLock();
+            }
+
+            try
+            {
+                _snapshotSemaphore.EnterReadLock();
+
+                taskCompletionSource.SetResult(Snapshot.GetValueOrDefault(key));
+            }
+            finally
+            {
+                _snapshotSemaphore.ExitReadLock();
+            }
+        }, IsolationScheduler.Priority.High);
+
+        return taskCompletionSource.Task.Result;
     }
 
-    internal List<WriteOperation<TValue>> GetOperations()
+    internal Dictionary<string, WriteOperation<TValue>> GetOperations()
     {
-        try
-        {
-            _operationsSemaphore.Wait();
+        var taskCompletionSource = new TaskCompletionSource<Dictionary<string, WriteOperation<TValue>>>();
 
-            return [.. Operations.Values];
-        }
-        finally
+        _scheduler.Schedule(() =>
         {
-            _operationsSemaphore.Release();
-        }
+            try
+            {
+                _operationsSemaphore.EnterReadLock();
+
+                taskCompletionSource.SetResult(Operations);
+            }
+            finally
+            {
+                _operationsSemaphore.ExitReadLock();
+            }
+        }, IsolationScheduler.Priority.High);
+
+        return taskCompletionSource.Task.Result;
     }
 
-    internal void LazySync(IEnumerable<WriteOperation<TValue>> operationsToProcess)
+    internal void LazySync(Dictionary<string, WriteOperation<TValue>> operationsToProcess, DateTime commitTime)
     {
-        foreach (var operation in operationsToProcess.Where(operation => CreationTime < operation.DateTime))
+        var newOperations = operationsToProcess.Where(op =>
         {
-            AddWriteOperationUnsafe(operation.LazyDeepCloneValue(CreationTime));
-        }
+
+            if (Operations.TryGetValue(op.Key, out var persistedOperation))
+            {
+                var persistedTicks = persistedOperation.DateTime.Ticks;
+
+                var operationTicks = op.Value.DateTime.Ticks;
+
+                // we only want to apply operations that are newer than the persisted ones
+                return operationTicks > persistedTicks;
+            }
+
+            var transactionTicks = _creationTime.Ticks;
+
+            var commitTicks = commitTime.Ticks;
+            
+            // we only want to apply operations that are newer than the transaction
+            return commitTicks > transactionTicks;
+        }).ToList();
+
+        _scheduler.Schedule(() =>
+        {
+            try
+            {
+                _operationsSemaphore.EnterWriteLock();
+
+                foreach (var operation in newOperations)
+                {
+                    AddWriteOperationUnsafe(operation.Value.LazyDeepCloneValue());
+                }
+            }
+            finally
+            {
+                _operationsSemaphore.ExitWriteLock();
+            }
+        }, IsolationScheduler.Priority.High);
+        
     }
 
     private void AddWriteOperationUnsafe(WriteOperation<TValue> writeOperation)
     {
-        if(writeOperation is Remove<TValue> removeOperation)
-            removeOperation.Apply(_snapshot);
-
-        Operations.Remove(writeOperation.Key);
-
         Operations[writeOperation.Key] = writeOperation;
     }
 
-    private void ApplyChangesUnsafe(ConcurrentDictionary<string, TValue> store)
+    private void ApplyChangesUnsafe(Dictionary<string, TValue> store)
     {
         foreach (var operation in Operations.Values)
         {
             operation.Apply(store);
         }
+    }
+
+    public void StopProcessing()
+    {
+        _scheduler.BlockAdditions();
+        _scheduler.WaitForCompletionAsync();
+        _scheduler.StopProcessing();
+        _cancellationTokenSource.Cancel();
     }
 }

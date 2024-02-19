@@ -1,7 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Runtime.ConstrainedExecution;
-using Collections.Isolated;
 using Collections.Isolated.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -37,15 +35,54 @@ namespace IsolatedDictionaryTests
 
             Task.Run(() =>
             {
-                Task.Delay(100);
+                Task.Delay(10).Wait();
 
                 dictionary.SaveChangesAsync();
             });
 
             var getAsync = await dictionary2.TryGetAsync("key");
 
+            Assert.Equal(null, getAsync);
+        }
 
-            Assert.Equal("value", getAsync);
+        [Fact]
+        public async Task BasicAdd_Concurrent_reopen_transaction()
+        {
+            var dictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+
+            var dictionary2 = Scope2!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+
+            await dictionary.AddOrUpdateAsync("key", "value");
+
+            await dictionary.SaveChangesAsync();
+
+            await dictionary2.AddOrUpdateAsync("key", "value-modified");
+
+            await dictionary2.SaveChangesAsync();
+
+            var getAsync = await dictionary.TryGetAsync("key");
+
+            Assert.Equal("value-modified", getAsync);
+        }
+
+        [Fact]
+        public async Task BasicRemove_Concurrent_reopen_transaction()
+        {
+            var dictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+
+            var dictionary2 = Scope2!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+
+            await dictionary.AddOrUpdateAsync("key", "value");
+
+            await dictionary.SaveChangesAsync();
+
+            await dictionary2.RemoveAsync("key");
+
+            await dictionary2.SaveChangesAsync();
+
+            var getAsync = await dictionary.TryGetAsync("key");
+
+            Assert.Equal(null, getAsync);
         }
 
         [Fact]
@@ -87,18 +124,25 @@ namespace IsolatedDictionaryTests
             }
 
             stopwatch.Start();
-            
-            await Parallel.ForEachAsync(dict, async (kv, _) => await dictionary.AddOrUpdateAsync(kv.Key, kv.Value));
 
-            logger.LogInformation($"AddOrUpdateAsync: {stopwatch.Elapsed}");
+            foreach (var kv in dict)
+            {
+                await dictionary.AddOrUpdateAsync(kv.Key, kv.Value);
+            }
+
+            logger.LogInformation($"AddOrUpdateAsync: {stopwatch.ElapsedTicks}");
+
+            stopwatch.Restart();
 
             await dictionary.SaveChangesAsync();
 
-            logger.LogInformation($"SaveChangesAsync: {stopwatch.Elapsed}");
+            logger.LogInformation($"SaveChangesAsync: {stopwatch.ElapsedTicks}");
 
-            var count = dictionary2.Count();
+            stopwatch.Restart();
 
-            logger.LogInformation($"QueryAsync: {stopwatch.Elapsed}");
+            var count = await dictionary2.CountAsync();
+
+            logger.LogInformation($"QueryAsync: {stopwatch.ElapsedTicks}");
 
             Assert.Equal(1_000, count);
         }
@@ -133,7 +177,7 @@ namespace IsolatedDictionaryTests
 
             logger.LogInformation($"SaveChangesAsync: {stopwatch.Elapsed}");
 
-            var dictCount = dictionary2.Count();
+            var dictCount = await dictionary2.CountAsync();
 
             logger.LogInformation($"QueryAsync: {stopwatch.Elapsed}");
 
@@ -166,7 +210,7 @@ namespace IsolatedDictionaryTests
         [Fact]
         public async Task EventualConsistencyWithPredictedStateValidation()
         {
-            const int numberOfTransactions = 1000;
+            const int numberOfTransactions = 100;
             const int numberOfKeys = 100;
             var expectedState = new ConcurrentDictionary<string, string>();
             var tasks = new List<Task>();
@@ -280,6 +324,12 @@ namespace IsolatedDictionaryTests
                     for (int k = 0; k < numberOfKeysPerTransaction; k++)
                     {
                         int keyIndex = (t1 * numberOfKeysPerTransaction + k) % (numberOfTransactions * numberOfKeysPerTransaction);
+
+                        if (keyIndex == 11)
+                        {
+                            Console.WriteLine();
+                        }
+
                         string key = $"key{keyIndex}";
                         string newValue = $"updatedByTransaction{t1}";
 

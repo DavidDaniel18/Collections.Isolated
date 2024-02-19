@@ -1,14 +1,15 @@
 ﻿using Collections.Isolated.Abstractions;
+using Collections.Isolated.Interfaces;
 
-namespace Collections.Isolated;
+namespace Collections.Isolated.Context;
 
 public sealed class DictionaryContext<TValue> : IDictionaryContext<TValue>, IDisposable
     where TValue : class
 {
     private readonly string _id = Guid.NewGuid().ToString();
-    private readonly IsolatedDictionary<TValue> _dictionary;
+    private readonly IIsolatedDictionary<TValue> _dictionary;
 
-    public DictionaryContext(IsolatedDictionary<TValue> dictionary)
+    public DictionaryContext(IIsolatedDictionary<TValue> dictionary)
     {
         _dictionary = dictionary;
     }
@@ -28,9 +29,9 @@ public sealed class DictionaryContext<TValue> : IDictionaryContext<TValue>, IDis
         await _dictionary.RemoveAsync(key, _id);
     }
 
-    public int Count()
+    public async Task<int> CountAsync()
     {
-        return _dictionary.Count();
+        return await _dictionary.CountAsync(_id);
     }
 
     public async Task<TValue?> TryGetAsync(string key)
