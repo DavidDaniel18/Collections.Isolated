@@ -1,6 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using Collections.Isolated.Entities;
-using Collections.Isolated.Serialization;
+using Collections.Isolated.ValueObjects.Commands;
 
 namespace Collections.Isolated;
 
@@ -10,20 +10,54 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
 
     private readonly ConcurrentDictionary<string, Transaction<TValue>> _transactions = new();
 
-    internal void SaveChanges(Transaction<TValue> transaction)
+    internal Dictionary<string, WriteOperation<TValue>> SaveChanges(string transactionId)
     {
+        var transaction = _transactions[transactionId];
+
         _transactions.Remove(transaction.Id, out _);
 
         transaction.Apply();
 
+        var operations = transaction.GetOperations();
+
         transaction.StopProcessing();
 
         _dictionary = new ConcurrentDictionary<string, TValue>(transaction.Snapshot);
+
+        return operations;
     }
 
     internal int Count()
     {
         return _dictionary.Count;
+    }
+
+    public TValue? Get(string key, string transactionId)
+    {
+        var transaction = _transactions[transactionId];
+
+        return transaction.Get(key);
+    }
+
+    public void AddOrUpdate(string key, TValue value, string transactionId)
+    {
+        var transaction = _transactions[transactionId];
+
+        transaction.AddOrUpdateOperation(key, value);
+    }
+
+    public void Remove(string key, string transactionId)
+    {
+        var transaction = _transactions[transactionId];
+
+        transaction.AddRemoveOperation(key);
+    }
+
+    public void BatchAddOrUpdate(IEnumerable<(string key, TValue value)> items, string transactionId)
+    {
+        var transaction = _transactions[transactionId];
+
+        transaction.AddOrUpdateBatchOperation(items);
     }
 
     internal void UndoChanges(string transactionId)
@@ -34,45 +68,37 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
         }
     }
 
-    internal Transaction<TValue> GetOrCreateTransaction(string transactionId)
+    internal void EnsureTransactionCreated(string transactionId)
     {
-        return GetTransaction(transactionId) ?? CreateTransaction(transactionId);
+        if(ContainsTransaction(transactionId) is false)
+        {
+            CreateTransaction(transactionId);
+        }
     }
 
-    internal Transaction<TValue>? GetTransaction(string transactionId)
+    internal bool ContainsTransaction(string transactionId)
     {
-        _transactions.TryGetValue(transactionId, out var transaction);
-
-        return transaction;
+        return _transactions.ContainsKey(transactionId);
     }
 
-    private Transaction<TValue> CreateTransaction(string transactionId)
+    internal void UpdateTransactionWithLog(Dictionary<string, WriteOperation<TValue>> log, string transactionId, long lastLogTime)
     {
-        var creationTime = DateTime.UtcNow;
+        var transaction = _transactions[transactionId];
 
+        transaction.LazySync(log, lastLogTime);
+    }
+
+    private void CreateTransaction(string transactionId)
+    {
         var snapshot = new Dictionary<string, TValue>();
 
         foreach (var (key, value) in _dictionary)
         {
-            snapshot.Add(key, DeepCloneValue(value));
+            snapshot.Add(key, value);
         }
 
-        var transaction = new Transaction<TValue>(transactionId, new Dictionary<string, TValue>(snapshot), creationTime);
+        var transaction = new Transaction<TValue>(transactionId, new Dictionary<string, TValue>(snapshot), Clock.GetTicks());
 
         _transactions.TryAdd(transactionId, transaction);
-
-        return transaction;
-    }
-
-    private TValue DeepCloneValue(TValue value)
-    {
-        if(Serializer.IsPrimitiveOrSpecialType<TValue>()) return value;
-
-        return Serializer.DeserializeFromBytes<TValue>(Serializer.SerializeToBytes(value));
-    }
-
-    public Dictionary<string, Transaction<TValue>> GetTransactions()
-    {
-        return _transactions.ToDictionary();
     }
 }

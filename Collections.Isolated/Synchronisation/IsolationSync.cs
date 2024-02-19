@@ -1,5 +1,5 @@
-﻿using Collections.Isolated.Interfaces;
-using System.Collections.Concurrent;
+﻿using Collections.Isolated.Entities;
+using Collections.Isolated.Interfaces;
 using Collections.Isolated.ValueObjects.Commands;
 
 namespace Collections.Isolated.Synchronisation;
@@ -9,98 +9,64 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue>
 {
     private readonly IsolatedDictionary<TValue> _dictionary = new();
 
-    private string _currentTransactionId = string.Empty;
-
     private Dictionary<string, WriteOperation<TValue>> _log = new();
-
-    private DateTime _lastLogTime = DateTime.UtcNow;
 
     private readonly SelectiveRelease _selectiveRelease = new();
 
+    private long _lastLogTime = -1;
+
     public async Task<TValue?> GetAsync(string key, string transactionId)
     {
-        var transaction = _dictionary.GetOrCreateTransaction(transactionId);
+        _dictionary.EnsureTransactionCreated(transactionId);
 
         await AttemptLockAcquisition(transactionId);
 
-        return transaction.Get(key);
+        return _dictionary.Get(key, transactionId);
     }
 
-    public Task AddOrUpdateAsync(string key, TValue value, string transactionId)
+    public void AddOrUpdate(string key, TValue value, string transactionId)
     {
-        var transaction = _dictionary.GetOrCreateTransaction(transactionId);
+        _dictionary.EnsureTransactionCreated(transactionId);
 
-        transaction.AddOrUpdateOperation(key, value);
-
-        return Task.CompletedTask;
+        _dictionary.AddOrUpdate(key, value, transactionId);
     }
 
-    public Task RemoveAsync(string key, string transactionId)
+    public void Remove(string key, string transactionId)
     {
-        var transaction = _dictionary.GetOrCreateTransaction(transactionId);
+        _dictionary.EnsureTransactionCreated(transactionId);
 
-        transaction.AddRemoveOperation(key);
-
-        return Task.CompletedTask;
+        _dictionary.Remove(key, transactionId);
     }
 
-    public Task BatchApplyOperationAsync(IEnumerable<(string key, TValue value)> items, string transactionId)
+    public void BatchApplyOperation(IEnumerable<(string key, TValue value)> items, string transactionId)
     {
-        var transaction = _dictionary.GetOrCreateTransaction(transactionId);
+        _dictionary.EnsureTransactionCreated(transactionId);
 
-        transaction.AddOrUpdateBatchOperation(items);
-
-        return Task.CompletedTask;
-    }
-
-    public async Task SaveChangesAsync(string transactionId)
-    {
-        var transaction = _dictionary.GetTransaction(transactionId);
-
-        if (transaction is null)
-        {
-            return;
-        }
-
-        var operationsToProcess = transaction.GetOperations();
-
-        if (operationsToProcess.Count == 0)
-        {
-            return;
-        }
-
-        await AttemptLockAcquisition(transactionId);
-
-        _dictionary.SaveChanges(transaction);
-
-        _lastLogTime = DateTime.UtcNow;
-
-        _log = operationsToProcess;
-
-        //if (_transactionLockIds.TryDequeue(out var nextTransactionId))
-        //{
-        //    _selectiveRelease.Release(nextTransactionId);
-        //}
-        //else
-        //{
-        //    _currentTransactionId = string.Empty;
-        //}
-
-        //if (_transactionLockIds.Count > 0 && _currentTransactionId == string.Empty)
-        //{
-        //    throw new InvalidOperationException("There are still transactions in the queue.");
-        //}
-
-        _selectiveRelease.Release();
+        _dictionary.BatchAddOrUpdate(items, transactionId);
     }
 
     public async Task<int> CountAsync(string transactionId)
     {
-        _ = _dictionary.GetOrCreateTransaction(transactionId);
+        _dictionary.EnsureTransactionCreated(transactionId);
 
         await AttemptLockAcquisition(transactionId);
 
         return _dictionary.Count();
+    }
+
+    public async Task SaveChangesAsync(string transactionId)
+    {
+        if (_dictionary.ContainsTransaction(transactionId) is false) return;
+
+        await AttemptLockAcquisition(transactionId);
+
+        var operations = _dictionary.SaveChanges(transactionId);
+
+        _lastLogTime = Clock.GetTicks();
+
+        _log = operations;
+
+        _selectiveRelease.Release();
     }
 
     public void UndoChanges(string transactionId)
@@ -110,19 +76,6 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue>
 
     private async Task AttemptLockAcquisition(string transactionId)
     {
-        if (_currentTransactionId.Equals(transactionId)) return;
-
-        //// If the current transaction is the one that is trying to acquire the lock, then we need to wait for the lock to be released.
-        //if (Interlocked.CompareExchange(ref _currentTransactionId, transactionId, string.Empty).Equals(transactionId)
-        //    || _currentTransactionId.Equals(transactionId) is false)
-        //{
-        //    _transactionLockIds.Enqueue(transactionId);
-
-        //    await _selectiveRelease.WaitAsync(transactionId);
-
-        //    _currentTransactionId = transactionId;
-        //}
-
         await _selectiveRelease.WaitAsync(transactionId);
 
         LockAcquired(transactionId);
@@ -130,8 +83,6 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue>
 
     private void LockAcquired(string transactionId)
     {
-        var transaction = _dictionary.GetOrCreateTransaction(transactionId);
-
-        transaction.LazySync(_log, _lastLogTime);
+        _dictionary.UpdateTransactionWithLog(_log, transactionId, _lastLogTime);
     }
 }

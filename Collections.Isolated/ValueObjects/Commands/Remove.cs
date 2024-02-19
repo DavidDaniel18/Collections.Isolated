@@ -1,6 +1,6 @@
 ﻿namespace Collections.Isolated.ValueObjects.Commands;
 
-internal sealed record Remove<TValue>(string Key, DateTime CreationTime) : WriteOperation<TValue>(Key, CreationTime) where TValue : class
+internal sealed record Remove<TValue>(string Key, long CreationTime) : WriteOperation<TValue>(Key, CreationTime) where TValue : class
 {
     internal override void Apply(IDictionary<string, TValue> dictionary)
     {
@@ -9,6 +9,6 @@ internal sealed record Remove<TValue>(string Key, DateTime CreationTime) : Write
 
     internal override WriteOperation<TValue> LazyDeepCloneValue()
     {
-        return new Remove<TValue>(Key, DateTime);
+        return new Remove<TValue>(Key, CreationTime);
     }
 }

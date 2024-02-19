@@ -14,19 +14,19 @@ public sealed class DictionaryContext<TValue> : IDictionaryContext<TValue>, IDis
         _dictionary = dictionary;
     }
 
-    public async Task AddOrUpdateAsync(string key, TValue value)
+    public void AddOrUpdate(string key, TValue value)
     {
-        await _dictionary.AddOrUpdateAsync(key, value, _id);
+        _dictionary.AddOrUpdate(key, value, _id);
     }
 
-    public async Task AddOrUpdateRangeAsync(IEnumerable<(string key, TValue value)> items)
+    public void AddOrUpdateRange(IEnumerable<(string key, TValue value)> items)
     {
-        await _dictionary.BatchApplyOperationAsync(items, _id);
+        _dictionary.BatchApplyOperation(items, _id);
     }
 
-    public async Task RemoveAsync(string key)
+    public void Remove(string key)
     {
-        await _dictionary.RemoveAsync(key, _id);
+        _dictionary.Remove(key, _id);
     }
 
     public async Task<int> CountAsync()

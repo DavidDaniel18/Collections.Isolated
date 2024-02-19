@@ -3,11 +3,11 @@
 public interface IDictionaryContext<TValue>
     where TValue : class
 {
-    Task AddOrUpdateAsync(string key, TValue value);
+    void AddOrUpdate(string key, TValue value);
 
-    Task AddOrUpdateRangeAsync(IEnumerable<(string key, TValue value)> items);
+    void AddOrUpdateRange(IEnumerable<(string key, TValue value)> items);
 
-    Task RemoveAsync(string key);
+    void Remove(string key);
 
     Task<int> CountAsync();
 

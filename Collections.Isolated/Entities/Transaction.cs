@@ -12,7 +12,7 @@ internal sealed class Transaction<TValue> where TValue : class
 
     internal readonly Dictionary<string, TValue> Snapshot;
 
-    private readonly DateTime _creationTime;
+    private readonly long _creationTime;
 
     private readonly IsolationScheduler _scheduler;
 
@@ -22,7 +22,7 @@ internal sealed class Transaction<TValue> where TValue : class
 
     private readonly CancellationTokenSource _cancellationTokenSource = new();
 
-    internal Transaction(string id, Dictionary<string, TValue> snapshot, DateTime creationTime)
+    internal Transaction(string id, Dictionary<string, TValue> snapshot, long creationTime)
     {
         Id = id;
         Snapshot = snapshot;
@@ -32,12 +32,12 @@ internal sealed class Transaction<TValue> where TValue : class
 
     internal void AddOrUpdateOperation(string key, TValue value)
     {
-        var writeOperation = new AddOrUpdate<TValue>(key, value, DateTime.UtcNow);
-
         _scheduler.Schedule(() =>
         {
             try
             {
+                var writeOperation = new AddOrUpdate<TValue>(key, value, Clock.GetTicks());
+
                 OperationEnterWriteLock();
 
                 AddWriteOperationUnsafe(writeOperation);
@@ -52,12 +52,12 @@ internal sealed class Transaction<TValue> where TValue : class
 
     public void AddOrUpdateBatchOperation(IEnumerable<(string key, TValue value)> items)
     {
-        var writeOperations = items.Select(item => new AddOrUpdate<TValue>(item.key, item.value, DateTime.UtcNow));
-
         _scheduler.Schedule(() =>
         {
             try
             {
+                var writeOperations = items.Select(item => new AddOrUpdate<TValue>(item.key, item.value, Clock.GetTicks()));
+
                 OperationEnterWriteLock();
 
                 foreach (var writeOperation in writeOperations)
@@ -75,12 +75,12 @@ internal sealed class Transaction<TValue> where TValue : class
 
     public void AddRemoveOperation(string key)
     {
-        var removeOperation = new Remove<TValue>(key, DateTime.UtcNow);
-
         _scheduler.Schedule(() =>
         {
             try
             {
+                var removeOperation = new Remove<TValue>(key, Clock.GetTicks());
+
                 OperationEnterWriteLock();
 
                 AddWriteOperationUnsafe(removeOperation);
@@ -94,8 +94,6 @@ internal sealed class Transaction<TValue> where TValue : class
 
     internal void Apply()
     {
-        if (Operations.Count == 0) return;
-
         _scheduler.Schedule(() =>
         {
             try
@@ -221,7 +219,7 @@ internal sealed class Transaction<TValue> where TValue : class
         return taskCompletionSource.Task.Result;
     }
 
-    internal void LazySync(Dictionary<string, WriteOperation<TValue>> operationsToProcess, DateTime commitTime)
+    internal void LazySync(Dictionary<string, WriteOperation<TValue>> operationsToProcess, long commitTime)
     {
         _scheduler.Schedule(() =>
         {
@@ -234,20 +232,16 @@ internal sealed class Transaction<TValue> where TValue : class
 
                     if (Operations.TryGetValue(op.Key, out var persistedOperation))
                     {
-                        var persistedTicks = persistedOperation.DateTime.Ticks;
+                        var persistedTicks = persistedOperation.CreationTime;
 
-                        var operationTicks = op.Value.DateTime.Ticks;
+                        var operationTicks = op.Value.CreationTime;
 
                         // we only want to apply operations that are newer than the persisted ones
                         return operationTicks > persistedTicks;
                     }
 
-                    var transactionTicks = _creationTime.Ticks;
-
-                    var commitTicks = commitTime.Ticks;
-
                     // we only want to apply operations that are newer than the transaction
-                    return commitTicks > transactionTicks;
+                    return commitTime > _creationTime;
                 }).ToList();
 
                 foreach (var operation in newOperations)
@@ -278,10 +272,7 @@ internal sealed class Transaction<TValue> where TValue : class
 
     public void StopProcessing()
     {
-        _scheduler.BlockAdditions();
         _scheduler.WaitForCompletionAsync();
-        _scheduler.StopProcessing();
-        _cancellationTokenSource.Cancel();
     }
 
     private void OperationEnterReadLock()

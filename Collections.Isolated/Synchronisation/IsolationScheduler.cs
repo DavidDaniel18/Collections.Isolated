@@ -1,15 +1,17 @@
-﻿namespace Collections.Isolated.Synchronisation;
+﻿using System.Diagnostics;
+
+namespace Collections.Isolated.Synchronisation;
 
 public class IsolationScheduler
 {
     private readonly CancellationTokenSource _cancellationTokenSource;
-    private readonly PriorityQueue<Action, int> _taskQueue = new();
-    private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.SupportsRecursion);
+    private readonly PriorityFifoQueue<Action> _taskQueue = new();
+    private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.NoRecursion);
     private readonly SemaphoreSlim _semaphore = new(0);
     private Action? _currentAction;
     private readonly Task _processingTask;
-    private bool _isProcessing = true;
     private bool _canAdd = true;
+    private readonly Stopwatch _stopwatch = new();
 
     public IsolationScheduler(CancellationTokenSource cancellationTokenSource)
     {
@@ -33,13 +35,9 @@ public class IsolationScheduler
         {
             EnterWriteLock();
 
-            _taskQueue.Enqueue(task, (int)priority);
+            _taskQueue.Enqueue(task, priority);
 
             _semaphore.Release();
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
         }
         finally
         {
@@ -49,7 +47,7 @@ public class IsolationScheduler
 
     private void ProcessQueueAsync()
     {
-        while (_isProcessing)
+        while (true)
         {
             try
             {
@@ -65,39 +63,58 @@ public class IsolationScheduler
                     {
                         continue;
                     }
+
+                    _currentAction.Invoke();
+
+                    _currentAction = null;
                 }
                 finally
                 {
                     _lock.ExitWriteLock();
                 }
-
-                _currentAction.Invoke();
-
-                _currentAction = null;
-
             }
             catch (Exception e) when (e is TaskCanceledException)
             {
-                return;
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine(e);
+                throw;
             }
         }
     }
 
     public void WaitForCompletionAsync()
     {
+
+        _stopwatch.Start();
+
+        try
+        {
+            EnterWriteLock();
+
+            _canAdd = false;
+        }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
+        
         while (true)
         {
+            if (_stopwatch.ElapsedMilliseconds > 1_000)
+            {
+                throw new TimeoutException("Could not cancel transaction processing scheduler");
+            }
+
             try
             {
                 EnterReadLock();
 
-                if (_currentAction == null && (_taskQueue.TryPeek(out _, out var priority) is false || priority > 0))
+                if (_currentAction == null && 
+                    (_taskQueue.TryDequeue(out _, out var priority) is false || priority is Priority.Medium or Priority.High))
                 {
-                    return;
+                    _cancellationTokenSource.Cancel(false);
+
+                    _semaphore.Release();
+
+                    break;
                 }
             }
             finally
@@ -105,20 +122,6 @@ public class IsolationScheduler
                 _lock.ExitReadLock();
             }
         }
-    }
-
-    public void BlockAdditions()
-    {
-        _canAdd = false;
-    }
-
-    public void StopProcessing()
-    {
-        _isProcessing = false;
-
-        WaitForCompletionAsync();
-
-        _semaphore.Release();
     }
 
     public enum Priority
