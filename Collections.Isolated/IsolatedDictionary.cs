@@ -10,7 +10,7 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
 
     private readonly ConcurrentDictionary<string, Transaction<TValue>> _transactions = new();
 
-    internal Dictionary<string, WriteOperation<TValue>> SaveChanges(string transactionId)
+    internal async Task<Dictionary<string, WriteOperation<TValue>>> SaveChangesAsync(string transactionId)
     {
         var transaction = _transactions[transactionId];
 
@@ -20,7 +20,7 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
 
         var operations = transaction.GetOperations();
 
-        transaction.StopProcessing();
+        await transaction.StopProcessing();
 
         _dictionary = new ConcurrentDictionary<string, TValue>(transaction.Snapshot);
 

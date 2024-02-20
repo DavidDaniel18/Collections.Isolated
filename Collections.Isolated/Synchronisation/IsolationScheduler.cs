@@ -1,126 +1,85 @@
-﻿using System.Diagnostics;
+﻿using Collections.Isolated.Registration;
+using System.Diagnostics;
 
 namespace Collections.Isolated.Synchronisation;
 
 public class IsolationScheduler
 {
-    private readonly CancellationTokenSource _cancellationTokenSource;
+    private readonly CancellationTokenSource _cancellationTokenSource = new();
     private readonly PriorityFifoQueue<Action> _taskQueue = new();
-    private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.NoRecursion);
     private readonly SemaphoreSlim _semaphore = new(0);
     private Action? _currentAction;
-    private readonly Task _processingTask;
-    private bool _canAdd = true;
-    private readonly Stopwatch _stopwatch = new();
-
-    public IsolationScheduler(CancellationTokenSource cancellationTokenSource)
+    private volatile bool _canAdd = true;
+    private readonly Task _task;
+     
+    public IsolationScheduler()
     {
-        _cancellationTokenSource = cancellationTokenSource;
-        _processingTask = Task.Factory.StartNew(ProcessQueueAsync, TaskCreationOptions.LongRunning);
-
-        _processingTask.ContinueWith(task =>
-        {
-            if (task.IsFaulted)
-            {
-                Console.WriteLine(task.Exception);
-            }
-        });
+        _task = ProcessQueueAsync();
     }
 
     public void Schedule(Action task, Priority priority)
     {
         if (_cancellationTokenSource.IsCancellationRequested || _canAdd is false) return;
 
-        try
-        {
-            EnterWriteLock();
+        _taskQueue.Enqueue(task, priority);
 
-            _taskQueue.Enqueue(task, priority);
-
-            _semaphore.Release();
-        }
-        finally
-        {
-            _lock.ExitWriteLock();
-        }
+        _semaphore.Release();
     }
 
-    private void ProcessQueueAsync()
+    private async Task ProcessQueueAsync()
     {
         while (true)
         {
-            try
+            await _semaphore.WaitAsync();
+
+            if (_cancellationTokenSource.IsCancellationRequested) return;
+
+            if (_taskQueue.TryDequeue(out _currentAction, out _) is false || _currentAction is null)
             {
-                _semaphore.Wait();
-
-                if (_cancellationTokenSource.IsCancellationRequested) return;
-
-                try
-                {
-                    EnterWriteLock();
-                    
-                    if (_taskQueue.TryDequeue(out _currentAction, out _) is false)
-                    {
-                        continue;
-                    }
-
-                    _currentAction.Invoke();
-
-                    _currentAction = null;
-                }
-                finally
-                {
-                    _lock.ExitWriteLock();
-                }
+                throw new InvalidOperationException("The task queue is empty.");
             }
-            catch (Exception e) when (e is TaskCanceledException)
-            {
-                throw;
-            }
+
+            var cts = new CancellationTokenSource(1_000);
+
+            await Task.Run(_currentAction, cts.Token);
+
+            _currentAction = null;
         }
     }
 
-    public void WaitForCompletionAsync()
+    public async Task WaitForCompletionAsync()
     {
+        _canAdd = false;
 
-        _stopwatch.Start();
+        var cts = new CancellationTokenSource(1_000);
 
-        try
-        {
-            EnterWriteLock();
+        await Task.Run(Wait, cts.Token);
 
-            _canAdd = false;
-        }
-        finally
+        return;
+
+        Task Wait()
         {
-            _lock.ExitWriteLock();
-        }
-        
-        while (true)
-        {
-            if (_stopwatch.ElapsedMilliseconds > 1_000)
+            while (true)
             {
-                throw new TimeoutException("Could not cancel transaction processing scheduler");
-            }
+                if (_task.IsCompleted || _task.IsCanceled || _task.IsFaulted)
+                {
+                    throw _task.Exception ?? new AggregateException("The task was cancelled.");
+                }
 
-            try
-            {
-                EnterReadLock();
-
-                if (_currentAction == null && 
+                if (_currentAction == null &&
                     (_taskQueue.TryDequeue(out _, out var priority) is false || priority is Priority.Medium or Priority.High))
                 {
                     _cancellationTokenSource.Cancel(false);
+
+                    Interlocked.MemoryBarrier();
 
                     _semaphore.Release();
 
                     break;
                 }
             }
-            finally
-            {
-                _lock.ExitReadLock();
-            }
+
+            return Task.CompletedTask;
         }
     }
 
@@ -129,15 +88,5 @@ public class IsolationScheduler
         Low = 2,
         Medium = 1,
         High = 0
-    }
-
-    private void EnterReadLock()
-    {
-        if (_lock.TryEnterReadLock(100) is false) throw new TimeoutException("Could not acquire read lock");
-    }
-
-    private void EnterWriteLock()
-    {
-        if (_lock.TryEnterWriteLock(100) is false) throw new TimeoutException("Could not acquire read lock");
     }
 }

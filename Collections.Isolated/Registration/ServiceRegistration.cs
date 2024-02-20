@@ -8,10 +8,17 @@ namespace Collections.Isolated.Registration;
 
 public static class ServiceRegistration
 {
-    public static IServiceCollection AddIsolatedCollections(this IServiceCollection collection)
+    internal static int TransactionTimeoutInMs = 10_000;
+
+    public static IServiceCollection AddIsolatedCollections(this IServiceCollection collection, int transactionTimeoutInMs = -1)
     {
         collection.AddSingleton(typeof(IIsolatedDictionary<>), typeof(IsolationSync<>));
         collection.AddScoped(typeof(IDictionaryContext<>), typeof(DictionaryContext<>));
+
+        if (transactionTimeoutInMs > 0)
+        {
+            TransactionTimeoutInMs = transactionTimeoutInMs;
+        }
 
         return collection;
     }

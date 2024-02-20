@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using Collections.Isolated.Registration;
 
 namespace Collections.Isolated.Synchronisation;
 
@@ -6,51 +7,61 @@ public class SelectiveRelease
 {
     private readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> _waiters = new();
     private readonly ConcurrentQueue<string> _transactionLockIds = new();
-    private string _freeId = string.Empty;
+    private volatile string _freeId = string.Empty;
+    private int _firstOperation = 0;
 
-    public async Task WaitAsync(string id)
+    public async Task<bool> NextAcquireAsync(string id)
     {
-        Interlocked.CompareExchange(ref _freeId, id, string.Empty);
+        // Atomically set _freeId to id if it's currently empty
+        var originalFreeId = Interlocked.CompareExchange(ref _freeId, id, string.Empty);
 
-        if (_freeId.Equals(id)) return;
+        // If this operation acquired the lock or if it's the first operation
+        if (originalFreeId == string.Empty || _freeId.Equals(id))
+        {
+            var wasFirst = Interlocked.Exchange(ref _firstOperation, 1) == 0;
+
+            return wasFirst;
+        }
 
         _transactionLockIds.Enqueue(id);
 
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.None);
+        var tcs = new TaskCompletionSource<bool>();
 
         _waiters[id] = tcs;
 
-        using (var cancellationTokenSource = new CancellationTokenSource(10_000)) // Set timeout to 1000ms
+        var resultTask = await Task.WhenAny(tcs.Task, Task.Delay(ServiceRegistration.TransactionTimeoutInMs));
+
+        if (resultTask == tcs.Task)
         {
-            var delayTask = Task.Delay(Timeout.Infinite, cancellationTokenSource.Token);
-            var completedTask = await Task.WhenAny(tcs.Task, delayTask);
-
-            if (completedTask == delayTask)
-            {
-                // If the delay task completed first, remove the waiter and throw a TimeoutException
-                _waiters.Remove(id, out _);
-                throw new TimeoutException($"Operation timed out after 1000ms for id {id}.");
-            }
-
-            // Cancel the delay to clean up the cancellation token source
-            await cancellationTokenSource.CancelAsync();
+            return true;
         }
 
-        // Wait for the task completion source to be signaled
-        await tcs.Task;
+        _waiters.TryRemove(id, out _);
+
+        throw new TimeoutException("The transaction lock acquisition timed out.");
     }
 
     public void Release()
     {
-        TaskCompletionSource<bool>? tcs;
-
-        if (_transactionLockIds.Count > 0 && _transactionLockIds.TryDequeue(out _freeId) && _waiters.TryRemove(_freeId, out tcs))
+        if (_transactionLockIds.TryDequeue(out var nextId))
         {
-            tcs.SetResult(true);
+            Interlocked.Exchange(ref _freeId, nextId);
+
+            if (_waiters.TryRemove(nextId, out var tcs))
+            {
+                tcs.SetResult(true);
+            }
+            else
+            {
+                // This should never happen
+                throw new InvalidOperationException("The transaction lock id was not found in the waiters collection.");
+            }
         }
         else
         {
-            _freeId = string.Empty;
+            // Reset for the next operation, ensure atomicity and visibility
+            Interlocked.Exchange(ref _firstOperation, 0);
+            Interlocked.Exchange(ref _freeId, string.Empty);
         }
     }
 }

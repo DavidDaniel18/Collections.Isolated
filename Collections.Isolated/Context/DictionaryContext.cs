@@ -3,49 +3,43 @@ using Collections.Isolated.Interfaces;
 
 namespace Collections.Isolated.Context;
 
-public sealed class DictionaryContext<TValue> : IDictionaryContext<TValue>, IDisposable
+public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictionary) : IDictionaryContext<TValue>, IDisposable
     where TValue : class
 {
     private readonly string _id = Guid.NewGuid().ToString();
-    private readonly IIsolatedDictionary<TValue> _dictionary;
-
-    public DictionaryContext(IIsolatedDictionary<TValue> dictionary)
-    {
-        _dictionary = dictionary;
-    }
 
     public void AddOrUpdate(string key, TValue value)
     {
-        _dictionary.AddOrUpdate(key, value, _id);
+        dictionary.AddOrUpdate(key, value, _id);
     }
 
     public void AddOrUpdateRange(IEnumerable<(string key, TValue value)> items)
     {
-        _dictionary.BatchApplyOperation(items, _id);
+        dictionary.BatchApplyOperation(items, _id);
     }
 
     public void Remove(string key)
     {
-        _dictionary.Remove(key, _id);
+        dictionary.Remove(key, _id);
     }
 
     public async Task<int> CountAsync()
     {
-        return await _dictionary.CountAsync(_id);
+        return await dictionary.CountAsync(_id);
     }
 
     public async Task<TValue?> TryGetAsync(string key)
     {
-        return await _dictionary.GetAsync(key, _id);
+        return await dictionary.GetAsync(key, _id);
     }
 
     public async Task SaveChangesAsync()
     {
-        await _dictionary.SaveChangesAsync(_id);
+        await dictionary.SaveChangesAsync(_id);
     }
 
     public void Dispose()
     {
-        _dictionary.UndoChanges(_id);
+        dictionary.UndoChanges(_id);
     }
 }

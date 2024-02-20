@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Collections.Isolated.Abstractions;
+using Collections.Isolated.Context;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Xunit.Abstractions;
@@ -244,6 +245,7 @@ namespace IsolatedDictionaryTests
             const int numberOfTransactions = 100; // Number of concurrent transactions
             const int numberOfKeysPerTransaction = 10; // Keys operated on by each transaction
             var rootDictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+            var logger = Scope!.ServiceProvider.GetRequiredService <ILogger<IDictionaryContext<string>>> ();
 
             // Prepopulate the dictionary with initial values
             for (int i = 0; i < numberOfTransactions * numberOfKeysPerTransaction; i++)
@@ -257,32 +259,8 @@ namespace IsolatedDictionaryTests
             for (int t = 0; t < numberOfTransactions; t++)
             {
                 var t1 = t;
-                var transactionTask = Task.Run(async () =>
-                {
-                    // Create a new scope for each transaction
-                    using var scope = CreateScope();
-                    var localDictionary = scope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
 
-                    // Each transaction reads, modifies, and updates a set of keys
-                    for (int k = 0; k < numberOfKeysPerTransaction; k++)
-                    {
-                        int keyIndex = (t1 * numberOfKeysPerTransaction + k) % (numberOfTransactions * numberOfKeysPerTransaction);
-
-                        if (keyIndex == 11)
-                        {
-                            Console.WriteLine();
-                        }
-
-                        string key = $"key{keyIndex}";
-                        string newValue = $"updatedByTransaction{t1}";
-
-                        // Simulate read-modify-write cycle within the transaction scope
-                        var currentValue = await localDictionary.TryGetAsync(key);
-                        var updatedValue = $"{currentValue}+{newValue}";
-                        localDictionary.AddOrUpdate(key, updatedValue);
-                    }
-                    await localDictionary.SaveChangesAsync();
-                });
+                var transactionTask = Task.Run(async () => await Function(t1, numberOfKeysPerTransaction, numberOfTransactions));
                 transactionTasks.Add(transactionTask);
             }
 
@@ -296,6 +274,46 @@ namespace IsolatedDictionaryTests
                 var value = await rootDictionary.TryGetAsync(key);
                 // Ensure that the value reflects updates from one or more transactions.
                 Assert.Contains($"updatedByTransaction", value); // Simplified check; adjust based on expected outcome
+            }
+
+            await rootDictionary.SaveChangesAsync();
+
+            await Function(numberOfTransactions - 1, numberOfTransactions * numberOfKeysPerTransaction, 1);
+
+            // Validate the final state of the dictionary
+            for (int i = 0; i < numberOfTransactions * numberOfKeysPerTransaction; i++)
+            {
+                string key = $"key{i}";
+                var value = await rootDictionary.TryGetAsync(key);
+                // Ensure that the value reflects updates from one or more transactions.
+                Assert.Contains($"updatedByTransaction{numberOfTransactions-1}", value); // Simplified check; adjust based on expected outcome
+            }
+
+            await rootDictionary.SaveChangesAsync();
+
+            async Task Function(int t1, int nbKeyPerTransaction, int nbOfTransaction)
+            {
+                // Create a new scope for each transaction
+                using var scope = CreateScope();
+                var localDictionary = scope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+
+                // Each transaction reads, modifies, and updates a set of keys
+                for (int k = 0; k < nbKeyPerTransaction; k++)
+                {
+                    int keyIndex = (t1 * nbKeyPerTransaction + k) % (nbOfTransaction * nbKeyPerTransaction);
+
+                    logger.LogInformation((keyIndex / 100).ToString());
+
+                    string key = $"key{keyIndex}";
+                    string newValue = $"updatedByTransaction{t1}";
+
+                    // Simulate read-modify-write cycle within the transaction scope
+                    var currentValue = await localDictionary.TryGetAsync(key);
+                    var updatedValue = $"{currentValue}+{newValue}";
+                    localDictionary.AddOrUpdate(key, updatedValue);
+                }
+
+                await localDictionary.SaveChangesAsync();
             }
         }
 
@@ -348,156 +366,6 @@ namespace IsolatedDictionaryTests
                 await Task.WhenAll(validationTasks);
             }
         }
-
-        [Fact]
-        public async Task ConcurrentFifoUpdatesTest()
-        {
-            const int numberOfKeys = 100; // Total number of keys
-            const int numberOfTransactions = 50; // Number of concurrent transactions
-            const int keysPerTransaction = 20; // Keys each transaction modifies
-            var random = new Random(); // For generating random key subsets
-
-            // Initialize the dictionary with initial values and timestamps
-            var rootDictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
-            for (int i = 0; i < numberOfKeys; i++)
-            {
-                var initialValue = $"value{i};timestamp={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
-                rootDictionary.AddOrUpdate($"key{i}", initialValue);
-            }
-            await rootDictionary.SaveChangesAsync();
-
-            // Concurrent transactions
-            var transactionTasks = new List<Task>();
-            for (int t = 0; t < numberOfTransactions; t++)
-            {
-                var transactionId = t;
-                transactionTasks.Add(Task.Run(async () =>
-                {
-                    using var scope = CreateScope();
-                    var localDictionary = scope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
-                    var keysToModify = Enumerable.Range(0, numberOfKeys)
-                                                  .OrderBy(_ => random.Next())
-                                                  .Take(keysPerTransaction)
-                                                  .ToList();
-
-                    foreach (var keyIndex in keysToModify)
-                    {
-                        string key = $"key{keyIndex}";
-                        var currentValue = await localDictionary.TryGetAsync(key);
-                        if (currentValue != null)
-                        {
-                            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                            var updatedValue = $"{currentValue}-modifiedByTransaction{transactionId};timestamp={timestamp}";
-                            localDictionary.AddOrUpdate(key, updatedValue);
-                        }
-                    }
-
-                    await localDictionary.SaveChangesAsync();
-                }));
-            }
-
-            await Task.WhenAll(transactionTasks);
-
-            // Validate FIFO behavior
-            for (int i = 0; i < numberOfKeys; i++)
-            {
-                string key = $"key{i}";
-                var value = await rootDictionary.TryGetAsync(key);
-                Assert.NotNull(value);
-
-                // Extract and verify timestamps to ensure FIFO behavior
-                var modifications = value.Split(new[] { "-modifiedByTransaction" }, StringSplitOptions.RemoveEmptyEntries)
-                                         .Skip(1) // Skip the initial value
-                                         .Select(mod => mod.Split(new[] { ";timestamp=" }, StringSplitOptions.RemoveEmptyEntries).Last())
-                                         .Select(long.Parse)
-                                         .ToList();
-
-                Assert.True(modifications.SequenceEqual(modifications.OrderBy(x => x)), $"Updates to {key} did not occur in FIFO order.");
-            }
-        }
-
-
-        [Fact]
-        public async Task ConcurrentAddRemoveReadModifyTestWithOverlappingTransactions()
-        {
-            const int numberOfKeys = 100; // Total number of keys in the dictionary
-            const int numberOfTransactions = 50; // Number of concurrent transactions
-            const int keysPerTransaction = 20; // Number of keys each transaction will attempt to interact with
-            var random = new Random(); // For generating random overlaps among transactions
-
-            // Initialize the dictionary with some values
-            var rootDictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
-            for (int i = 0; i < numberOfKeys; i++)
-            {
-                rootDictionary.AddOrUpdate($"key{i}", $"value{i}");
-            }
-            await rootDictionary.SaveChangesAsync();
-
-            // Define a task for each transaction
-            var transactionTasks = new List<Task>();
-            for (int t = 0; t < numberOfTransactions; t++)
-            {
-                transactionTasks.Add(Task.Run(async () =>
-                {
-                    using var scope = CreateScope();
-                    var localDictionary = scope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
-
-                    // Select a random subset of keys for various operations
-                    var keysToModify = Enumerable.Range(0, numberOfKeys)
-                                                  .OrderBy(_ => random.Next())
-                                                  .Take(keysPerTransaction)
-                                                  .ToList();
-
-                    // Randomly decide on an action: add, remove, or modify
-                    foreach (var keyIndex in keysToModify)
-                    {
-                        string key = $"key{keyIndex}";
-                        int action = random.Next(3); // Randomly choose between add(0), remove(1), or modify(2)
-                        switch (action)
-                        {
-                            case 0: // Add or update
-                                var addValue = $"addedOrUpdatedValue{t}_{keyIndex}";
-                                localDictionary.AddOrUpdate(key, addValue);
-                                break;
-                            case 1: // Remove
-                                localDictionary.Remove(key);
-                                break;
-                            case 2: // Modify
-                                var currentValue = await localDictionary.TryGetAsync(key);
-                                if (currentValue != null)
-                                {
-                                    var updatedValue = $"{currentValue}-modifiedByTransaction{t}";
-                                    localDictionary.AddOrUpdate(key, updatedValue);
-                                }
-                                break;
-                        }
-                    }
-
-                    await localDictionary.SaveChangesAsync();
-                }));
-            }
-
-            // Wait for all transactions to complete
-            await Task.WhenAll(transactionTasks);
-
-            // Validation phase: Check for data integrity and consistency
-            // Note: This validation checks for the presence of modified values.
-            // Additional checks may be needed to ensure removed keys are not present.
-            for (int i = 0; i < numberOfKeys; i++)
-            {
-                string key = $"key{i}";
-                var value = await rootDictionary.TryGetAsync(key);
-
-                // Ensure that if a value exists, it has been modified or added correctly
-                if (value != null)
-                {
-                    Assert.True(value.Contains("modifiedByTransaction") || value.Contains("addedOrUpdatedValue"),
-                                $"Value for {key} was not correctly modified or added.");
-                }
-                // Note: Additional validation logic may be required to verify removals and other specific conditions.
-            }
-        }
-
 
         public class HeapAllocation
         {

@@ -8,7 +8,7 @@ internal sealed class Transaction<TValue> where TValue : class
     public string Id { get; }
 
     //we compress the log to only show applied values
-    private Dictionary<string, WriteOperation<TValue>> Operations { get; set; } = new();
+    private Dictionary<string, WriteOperation<TValue>> Operations { get; } = new();
 
     internal readonly Dictionary<string, TValue> Snapshot;
 
@@ -16,17 +16,11 @@ internal sealed class Transaction<TValue> where TValue : class
 
     private readonly IsolationScheduler _scheduler;
 
-    private readonly ReaderWriterLockSlim _operationsSemaphore = new(LockRecursionPolicy.NoRecursion);
-
-    private readonly ReaderWriterLockSlim _snapshotSemaphore = new(LockRecursionPolicy.NoRecursion);
-
-    private readonly CancellationTokenSource _cancellationTokenSource = new();
-
     internal Transaction(string id, Dictionary<string, TValue> snapshot, long creationTime)
     {
         Id = id;
         Snapshot = snapshot;
-        _scheduler = new IsolationScheduler(_cancellationTokenSource);
+        _scheduler = new IsolationScheduler();
         _creationTime = creationTime;
     }
 
@@ -34,18 +28,9 @@ internal sealed class Transaction<TValue> where TValue : class
     {
         _scheduler.Schedule(() =>
         {
-            try
-            {
-                var writeOperation = new AddOrUpdate<TValue>(key, value, Clock.GetTicks());
+            var writeOperation = new AddOrUpdate<TValue>(key, value, Clock.GetTicks());
 
-                OperationEnterWriteLock();
-
-                AddWriteOperationUnsafe(writeOperation);
-            }
-            finally
-            {
-                _operationsSemaphore.ExitWriteLock();
-            }
+            AddWriteOperationUnsafe(writeOperation);
 
         }, IsolationScheduler.Priority.High);
     }
@@ -54,22 +39,13 @@ internal sealed class Transaction<TValue> where TValue : class
     {
         _scheduler.Schedule(() =>
         {
-            try
-            {
-                var writeOperations = items.Select(item => new AddOrUpdate<TValue>(item.key, item.value, Clock.GetTicks()));
+            var writeOperations = items.Select(item => new AddOrUpdate<TValue>(item.key, item.value, Clock.GetTicks()));
 
-                OperationEnterWriteLock();
-
-                foreach (var writeOperation in writeOperations)
-                {
-                    AddWriteOperationUnsafe(writeOperation);
-                }
-            }
-            finally
+            foreach (var writeOperation in writeOperations)
             {
-                _operationsSemaphore.ExitWriteLock();
+                AddWriteOperationUnsafe(writeOperation);
             }
-          
+
         }, IsolationScheduler.Priority.High);
     }
 
@@ -77,88 +53,35 @@ internal sealed class Transaction<TValue> where TValue : class
     {
         _scheduler.Schedule(() =>
         {
-            try
-            {
-                var removeOperation = new Remove<TValue>(key, Clock.GetTicks());
+            var removeOperation = new Remove<TValue>(key, Clock.GetTicks());
 
-                OperationEnterWriteLock();
-
-                AddWriteOperationUnsafe(removeOperation);
-            }
-            finally
-            {
-                _operationsSemaphore.ExitWriteLock();
-            }
+            AddWriteOperationUnsafe(removeOperation);
         }, IsolationScheduler.Priority.High);
     }
 
     internal void Apply()
     {
-        _scheduler.Schedule(() =>
-        {
-            try
-            {
-                SnapshotEnterWriteLock();
-
-                ApplyChangesUnsafe(Snapshot);
-            }
-            finally
-            {
-                _snapshotSemaphore.ExitWriteLock();
-            }
-        }, IsolationScheduler.Priority.High);
+        _scheduler.Schedule(() => ApplyChangesUnsafe(Snapshot), IsolationScheduler.Priority.High);
     }
 
     public void ApplyOneOperation()
     {
         _scheduler.Schedule(() =>
         {
-            try
-            {
-                _operationsSemaphore.EnterUpgradeableReadLock();
+            if (Operations.Count == 0) return;
 
-                if (Operations.Count == 0) return;
+            var operationsToProcess = Operations.Values.First();
 
-                try
-                {
-                    _snapshotSemaphore.EnterWriteLock();
+            operationsToProcess.Apply(Snapshot);
 
-                    var operationsToProcess = Operations.Values.First();
-
-                    operationsToProcess.Apply(Snapshot);
-
-                    Operations.Remove(operationsToProcess.Key);
-                }
-                finally
-                {
-                    _snapshotSemaphore.ExitWriteLock();
-                }
-            }
-            finally
-            {
-                _operationsSemaphore.ExitUpgradeableReadLock();
-
-            }
+            Operations.Remove(operationsToProcess.Key);
 
         }, IsolationScheduler.Priority.Medium);
     }
 
     internal void Clear()
     {
-        _scheduler.Schedule(() =>
-        {
-            try
-            {
-                OperationEnterWriteLock();
-
-                Operations.Clear();
-            }
-            finally
-            {
-                _operationsSemaphore.ExitWriteLock();
-            }
-
-        }, IsolationScheduler.Priority.High);
+        _scheduler.Schedule(() => Operations.Clear(), IsolationScheduler.Priority.High);
     }
 
     internal TValue? Get(string key)
@@ -167,32 +90,17 @@ internal sealed class Transaction<TValue> where TValue : class
 
         _scheduler.Schedule(() =>
         {
-            try
+            if (Operations.TryGetValue(key, out var operation) && operation is AddOrUpdate<TValue> addOrUpdate)
             {
-                OperationEnterReadLock();
+                taskCompletionSource.SetResult(addOrUpdate.LazyValue.Value);
 
-                if (Operations.TryGetValue(key, out var operation) && operation is AddOrUpdate<TValue> addOrUpdate)
-                {
-                    taskCompletionSource.SetResult(addOrUpdate.LazyValue.Value);
-
-                    return;
-                }
-            }
-            finally
-            {
-                _operationsSemaphore.ExitReadLock();
+                return;
             }
 
-            try
-            {
-                SnapshotEnterReadLock();
+            Interlocked.MemoryBarrier();
 
-                taskCompletionSource.SetResult(Snapshot.GetValueOrDefault(key));
-            }
-            finally
-            {
-                _snapshotSemaphore.ExitReadLock();
-            }
+            taskCompletionSource.SetResult(Snapshot.GetValueOrDefault(key));
+
         }, IsolationScheduler.Priority.High);
 
         return taskCompletionSource.Task.Result;
@@ -202,19 +110,7 @@ internal sealed class Transaction<TValue> where TValue : class
     {
         var taskCompletionSource = new TaskCompletionSource<Dictionary<string, WriteOperation<TValue>>>();
 
-        _scheduler.Schedule(() =>
-        {
-            try
-            {
-                OperationEnterReadLock();
-
-                taskCompletionSource.SetResult(Operations);
-            }
-            finally
-            {
-                _operationsSemaphore.ExitReadLock();
-            }
-        }, IsolationScheduler.Priority.High);
+        _scheduler.Schedule(() => taskCompletionSource.SetResult(Operations), IsolationScheduler.Priority.High);
 
         return taskCompletionSource.Task.Result;
     }
@@ -223,36 +119,27 @@ internal sealed class Transaction<TValue> where TValue : class
     {
         _scheduler.Schedule(() =>
         {
-            try
+            var newOperations = operationsToProcess.Where(op =>
             {
-                _operationsSemaphore.EnterWriteLock();
-
-                var newOperations = operationsToProcess.Where(op =>
+                if (Operations.TryGetValue(op.Key, out var persistedOperation))
                 {
+                    var persistedTicks = persistedOperation.CreationTime;
 
-                    if (Operations.TryGetValue(op.Key, out var persistedOperation))
-                    {
-                        var persistedTicks = persistedOperation.CreationTime;
+                    var operationTicks = op.Value.CreationTime;
 
-                        var operationTicks = op.Value.CreationTime;
-
-                        // we only want to apply operations that are newer than the persisted ones
-                        return operationTicks > persistedTicks;
-                    }
-
-                    // we only want to apply operations that are newer than the transaction
-                    return commitTime > _creationTime;
-                }).ToList();
-
-                foreach (var operation in newOperations)
-                {
-                    AddWriteOperationUnsafe(operation.Value.LazyDeepCloneValue());
+                    // we only want to apply operations that are newer than the persisted ones
+                    return operationTicks > persistedTicks;
                 }
-            }
-            finally
+
+                // we only want to apply operations that are newer than the transaction
+                return commitTime > _creationTime;
+            });
+
+            foreach (var operation in newOperations)
             {
-                _operationsSemaphore.ExitWriteLock();
+                AddWriteOperationUnsafe(operation.Value.LazyDeepCloneValue());
             }
+
         }, IsolationScheduler.Priority.High);
         
     }
@@ -270,28 +157,8 @@ internal sealed class Transaction<TValue> where TValue : class
         }
     }
 
-    public void StopProcessing()
+    public async Task StopProcessing()
     {
-        _scheduler.WaitForCompletionAsync();
-    }
-
-    private void OperationEnterReadLock()
-    {
-        if (_operationsSemaphore.TryEnterReadLock(100) is false) throw new TimeoutException("Could not acquire read lock");
-    }
-
-    private void OperationEnterWriteLock()
-    {
-        if (_operationsSemaphore.TryEnterWriteLock(100) is false) throw new TimeoutException("Could not acquire read lock");
-    }
-
-    private void SnapshotEnterReadLock()
-    {
-        if (_snapshotSemaphore.TryEnterReadLock(100) is false) throw new TimeoutException("Could not acquire read lock");
-    }
-
-    private void SnapshotEnterWriteLock()
-    {
-        if (_snapshotSemaphore.TryEnterWriteLock(100) is false) throw new TimeoutException("Could not acquire read lock");
+        await _scheduler.WaitForCompletionAsync();
     }
 }

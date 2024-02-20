@@ -4,12 +4,11 @@ using Collections.Isolated.ValueObjects.Commands;
 
 namespace Collections.Isolated.Synchronisation;
 
-public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue>
-    where TValue : class
+public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue> where TValue : class
 {
     private readonly IsolatedDictionary<TValue> _dictionary = new();
 
-    private Dictionary<string, WriteOperation<TValue>> _log = new();
+    private volatile Dictionary<string, WriteOperation<TValue>> _log = [];
 
     private readonly SelectiveRelease _selectiveRelease = new();
 
@@ -60,9 +59,9 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue>
 
         await AttemptLockAcquisition(transactionId);
 
-        var operations = _dictionary.SaveChanges(transactionId);
+        var operations = await _dictionary.SaveChangesAsync(transactionId);
 
-        _lastLogTime = Clock.GetTicks();
+        Interlocked.Exchange(ref _lastLogTime, Clock.GetTicks());
 
         _log = operations;
 
@@ -76,13 +75,14 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue>
 
     private async Task AttemptLockAcquisition(string transactionId)
     {
-        await _selectiveRelease.WaitAsync(transactionId);
-
-        LockAcquired(transactionId);
+        if (await _selectiveRelease.NextAcquireAsync(transactionId))
+        {
+            LockAcquired(transactionId);
+        }
     }
 
     private void LockAcquired(string transactionId)
     {
-        _dictionary.UpdateTransactionWithLog(_log, transactionId, _lastLogTime);
+        _dictionary.UpdateTransactionWithLog(_log, transactionId, Interlocked.Read(ref _lastLogTime));
     }
 }
