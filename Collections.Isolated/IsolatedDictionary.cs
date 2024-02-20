@@ -12,7 +12,7 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
 
     private readonly ConcurrentDictionary<string, Transaction<TValue>> _transactions = new();
 
-    internal async Task<Dictionary<string, WriteOperation<TValue>>> SaveChangesAsync(string transactionId)
+    internal IReadOnlyDictionary<string, WriteOperation<TValue>> SaveChangesAsync(string transactionId)
     {
         var transaction = _transactions[transactionId];
 
@@ -20,9 +20,7 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
 
         transaction.Apply();
 
-        var operations = await transaction.GetOperationsAsync();
-
-        await transaction.StopProcessing();
+        var operations = transaction.GetOperations();
 
         _dictionary = new ConcurrentDictionary<string, TValue>(transaction.Snapshot);
 
@@ -34,11 +32,11 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
         return _dictionary.Count;
     }
 
-    public async Task<TValue?> GetAsync(string key, string transactionId)
+    public TValue? Get(string key, string transactionId)
     {
         var transaction = _transactions[transactionId];
 
-        return await transaction.GetAsync(key);
+        return transaction.Get(key);
     }
 
     public void AddOrUpdate(string key, TValue value, string transactionId)
@@ -102,16 +100,5 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
         var transaction = new Transaction<TValue>(transactionId, new Dictionary<string, TValue>(snapshot), Clock.GetTicks());
 
         _transactions.TryAdd(transactionId, transaction);
-    }
-
-    public void LazyUpdateTransactions(string exceptTransactionId, List<WriteOperation<TValue>> log, long lastLogTime)
-    {
-        Parallel.ForEach(_transactions.Values, (transaction, _) =>
-        {
-            if (transaction.Id != exceptTransactionId)
-            {
-                transaction.LazySync(log, lastLogTime);
-            }
-        });
     }
 }

@@ -15,127 +15,64 @@ internal sealed class Transaction<TValue> where TValue : class
 
     private readonly long _creationTime;
 
-    private readonly IsolationScheduler _scheduler;
-
     internal Transaction(string id, Dictionary<string, TValue> snapshot, long creationTime)
     {
         Id = id;
         Snapshot = snapshot;
-        _scheduler = new IsolationScheduler();
         _creationTime = creationTime;
     }
 
     internal void AddOrUpdateOperation(string key, TValue value)
     {
-        _scheduler.Schedule(() =>
-        {
-            var writeOperation = new AddOrUpdate<TValue>(key, value, Clock.GetTicks());
+        var writeOperation = new AddOrUpdate<TValue>(key, value, Clock.GetTicks());
 
-            AddWriteOperationUnsafe(writeOperation);
-
-        }, IsolationScheduler.Priority.High);
+        AddWriteOperationUnsafe(writeOperation);
     }
 
     public void AddOrUpdateBatchOperation(IEnumerable<(string key, TValue value)> items)
     {
-        _scheduler.Schedule(() =>
+        var writeOperations = items.Select(item => new AddOrUpdate<TValue>(item.key, item.value, Clock.GetTicks()));
+
+        foreach (var writeOperation in writeOperations)
         {
-            var writeOperations = items.Select(item => new AddOrUpdate<TValue>(item.key, item.value, Clock.GetTicks()));
-
-            foreach (var writeOperation in writeOperations)
-            {
-                AddWriteOperationUnsafe(writeOperation);
-            }
-
-        }, IsolationScheduler.Priority.High);
+            AddWriteOperationUnsafe(writeOperation);
+        }
     }
 
     public void AddRemoveOperation(string key)
     {
-        _scheduler.Schedule(() =>
-        {
-            var removeOperation = new Remove<TValue>(key, Clock.GetTicks());
+        var removeOperation = new Remove<TValue>(key, Clock.GetTicks());
 
-            AddWriteOperationUnsafe(removeOperation);
-        }, IsolationScheduler.Priority.High);
+        AddWriteOperationUnsafe(removeOperation);
     }
 
     internal void Apply()
     {
-        _scheduler.Schedule(() => ApplyChangesUnsafe(Snapshot), IsolationScheduler.Priority.High);
-    }
-
-    public void ApplyOneOperation()
-    {
-        _scheduler.Schedule(() =>
-        {
-            if (Operations.Count == 0) return;
-
-            var operationsToProcess = Operations.Values.First();
-
-            operationsToProcess.Apply(Snapshot);
-
-            Operations.Remove(operationsToProcess.Key);
-
-        }, IsolationScheduler.Priority.Medium);
+        ApplyChangesUnsafe(Snapshot);
     }
 
     internal void Clear()
     {
-        _scheduler.Schedule(() => Operations.Clear(), IsolationScheduler.Priority.High);
+        Operations.Clear();
     }
 
-    internal async Task<TValue?> GetAsync(string key)
+    internal TValue? Get(string key)
     {
-        var taskCompletionSource = new TaskCompletionSource<TValue?>();
-
-        _scheduler.Schedule(() =>
+        if (Operations.TryGetValue(key, out var operation) && operation is AddOrUpdate<TValue> addOrUpdate)
         {
-            if (Operations.TryGetValue(key, out var operation) && operation is AddOrUpdate<TValue> addOrUpdate)
-            {
-                taskCompletionSource.SetResult(addOrUpdate.LazyValue.Value);
+            return addOrUpdate.LazyValue;
+        }
 
-                return;
-            }
-
-            Interlocked.MemoryBarrier();
-
-            taskCompletionSource.SetResult(Snapshot.GetValueOrDefault(key));
-
-        }, IsolationScheduler.Priority.High);
-
-        return await taskCompletionSource.Task.ConfigureAwait(false);
+        return Snapshot.GetValueOrDefault(key);
     }
 
-    internal async Task<Dictionary<string, WriteOperation<TValue>>> GetOperationsAsync()
+    internal IReadOnlyDictionary<string, WriteOperation<TValue>> GetOperations()
     {
-        var taskCompletionSource = new TaskCompletionSource<Dictionary<string, WriteOperation<TValue>>>();
-
-        _scheduler.Schedule(() => taskCompletionSource.SetResult(Operations), IsolationScheduler.Priority.High);
-
-        return await taskCompletionSource.Task.ConfigureAwait(false);
+        return Operations;
     }
 
 
     internal void Sync(IEnumerable<WriteOperation<TValue>> operationsToProcess, long commitTime)
-    {
-        _scheduler.Schedule(() => SyncNewerLogs(operationsToProcess, commitTime), IsolationScheduler.Priority.High);
-    }
-
-    internal void LazySync(IEnumerable<WriteOperation<TValue>> operationsToProcess, long commitTime)
-    {
-        _scheduler.Schedule(() =>
-        {
-            SyncNewerLogs(operationsToProcess, commitTime);
-
-            foreach (var operations in Operations.Values)
-            {
-                operations.Apply(Snapshot);
-            }
-        }, IsolationScheduler.Priority.Medium);
-    }
-
-    private void SyncNewerLogs(IEnumerable<WriteOperation<TValue>> operationsToProcess, long commitTime)
     {
         var newOperations = operationsToProcess.Where(op =>
         {
@@ -170,10 +107,5 @@ internal sealed class Transaction<TValue> where TValue : class
         {
             operation.Apply(store);
         }
-    }
-
-    public async Task StopProcessing()
-    {
-        await _scheduler.WaitForCompletionAsync();
     }
 }

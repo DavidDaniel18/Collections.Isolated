@@ -1,4 +1,5 @@
 ﻿using System.Collections.Immutable;
+using System.Collections.ObjectModel;
 using Collections.Isolated.Entities;
 using Collections.Isolated.Interfaces;
 using Collections.Isolated.ValueObjects.Commands;
@@ -9,7 +10,7 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue> where TV
 {
     private readonly IsolatedDictionary<TValue> _dictionary = new();
 
-    private volatile Dictionary<string, WriteOperation<TValue>> _log = [];
+    private volatile IReadOnlyDictionary<string, WriteOperation<TValue>> _log = new Dictionary<string, WriteOperation<TValue>>();
 
     private readonly SelectiveRelease _selectiveRelease = new();
 
@@ -21,7 +22,7 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue> where TV
 
         await AttemptLockAcquisition(transactionId);
 
-        return await _dictionary.GetAsync(key, transactionId);
+        return _dictionary.Get(key, transactionId);
     }
 
     public void AddOrUpdate(string key, TValue value, string transactionId)
@@ -60,7 +61,7 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue> where TV
 
         await AttemptLockAcquisition(transactionId);
 
-        var operations = await _dictionary.SaveChangesAsync(transactionId);
+        var operations = _dictionary.SaveChangesAsync(transactionId);
 
         Interlocked.Exchange(ref _lastLogTime, Clock.GetTicks());
 
