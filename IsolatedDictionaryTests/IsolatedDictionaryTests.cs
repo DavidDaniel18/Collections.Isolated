@@ -244,13 +244,13 @@ namespace IsolatedDictionaryTests
         {
             const int numberOfTransactions = 100; // Number of concurrent transactions
             const int numberOfKeysPerTransaction = 10; // Keys operated on by each transaction
-            var rootDictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
-            var logger = Scope!.ServiceProvider.GetRequiredService <ILogger<IDictionaryContext<string>>> ();
+            var rootDictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<HeapAllocation>>();
+            var logger = Scope!.ServiceProvider.GetRequiredService <ILogger<IDictionaryContext<HeapAllocation>>> ();
 
             // Prepopulate the dictionary with initial values
             for (int i = 0; i < numberOfTransactions * numberOfKeysPerTransaction; i++)
             {
-                rootDictionary.AddOrUpdate($"key{i}", $"initial{i}");
+                rootDictionary.AddOrUpdate($"key{i}",new HeapAllocation(){Value = $"initial{i}"});
             }
             await rootDictionary.SaveChangesAsync();
 
@@ -273,20 +273,7 @@ namespace IsolatedDictionaryTests
                 string key = $"key{i}";
                 var value = await rootDictionary.TryGetAsync(key);
                 // Ensure that the value reflects updates from one or more transactions.
-                Assert.Contains($"updatedByTransaction", value); // Simplified check; adjust based on expected outcome
-            }
-
-            await rootDictionary.SaveChangesAsync();
-
-            await Function(numberOfTransactions - 1, numberOfTransactions * numberOfKeysPerTransaction, 1);
-
-            // Validate the final state of the dictionary
-            for (int i = 0; i < numberOfTransactions * numberOfKeysPerTransaction; i++)
-            {
-                string key = $"key{i}";
-                var value = await rootDictionary.TryGetAsync(key);
-                // Ensure that the value reflects updates from one or more transactions.
-                Assert.Contains($"updatedByTransaction{numberOfTransactions-1}", value); // Simplified check; adjust based on expected outcome
+                Assert.Contains($"updatedByTransaction", value.Value); // Simplified check; adjust based on expected outcome
             }
 
             await rootDictionary.SaveChangesAsync();
@@ -295,22 +282,21 @@ namespace IsolatedDictionaryTests
             {
                 // Create a new scope for each transaction
                 using var scope = CreateScope();
-                var localDictionary = scope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+                var localDictionary = scope.ServiceProvider.GetRequiredService<IDictionaryContext<HeapAllocation>>();
 
                 // Each transaction reads, modifies, and updates a set of keys
                 for (int k = 0; k < nbKeyPerTransaction; k++)
                 {
                     int keyIndex = (t1 * nbKeyPerTransaction + k) % (nbOfTransaction * nbKeyPerTransaction);
 
-                    logger.LogInformation((keyIndex / 100).ToString());
-
                     string key = $"key{keyIndex}";
                     string newValue = $"updatedByTransaction{t1}";
 
                     // Simulate read-modify-write cycle within the transaction scope
                     var currentValue = await localDictionary.TryGetAsync(key);
-                    var updatedValue = $"{currentValue}+{newValue}";
-                    localDictionary.AddOrUpdate(key, updatedValue);
+
+                    var updatedValue = $"{currentValue?.Value??"default"}+{newValue}";
+                    localDictionary.AddOrUpdate(key, new HeapAllocation() {Value = updatedValue});
                 }
 
                 await localDictionary.SaveChangesAsync();

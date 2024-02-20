@@ -30,13 +30,14 @@ internal sealed record AddOrUpdate<TValue> : WriteOperation<TValue> where TValue
 
     internal override WriteOperation<TValue> LazyDeepCloneValue()
     {
-        if (Serializer.IsPrimitiveOrSpecialType<TValue>())
-        {
-            return new AddOrUpdate<TValue>(Key, LazyValue.Value, CreationTime);
-        }
+        return this;
+        //if (Serializer.IsPrimitiveOrSpecialType<TValue>())
+        //{
+        //    return new AddOrUpdate<TValue>(Key, LazyValue.Value, CreationTime);
+        //}
 
-        var lazyValue = new Lazy<TValue>(() => Serializer.DeserializeFromBytes<TValue>(Serializer.SerializeToBytes(LazyValue.Value)));
+        //var lazyValue = new Lazy<TValue>(() => Serializer.DeserializeFromBytes<TValue>(Serializer.SerializeToBytes(LazyValue.Value)));
 
-        return new AddOrUpdate<TValue>(Key, lazyValue, CreationTime);
+        //return new AddOrUpdate<TValue>(Key, lazyValue, CreationTime);
     }
 }

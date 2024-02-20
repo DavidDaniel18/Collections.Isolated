@@ -1,4 +1,6 @@
 ﻿using System.Collections.Concurrent;
+using System.Collections.Immutable;
+using System.Transactions;
 using Collections.Isolated.Entities;
 using Collections.Isolated.ValueObjects.Commands;
 
@@ -18,7 +20,7 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
 
         transaction.Apply();
 
-        var operations = transaction.GetOperations();
+        var operations = await transaction.GetOperationsAsync();
 
         await transaction.StopProcessing();
 
@@ -32,11 +34,11 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
         return _dictionary.Count;
     }
 
-    public TValue? Get(string key, string transactionId)
+    public async Task<TValue?> GetAsync(string key, string transactionId)
     {
         var transaction = _transactions[transactionId];
 
-        return transaction.Get(key);
+        return await transaction.GetAsync(key);
     }
 
     public void AddOrUpdate(string key, TValue value, string transactionId)
@@ -81,11 +83,11 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
         return _transactions.ContainsKey(transactionId);
     }
 
-    internal void UpdateTransactionWithLog(Dictionary<string, WriteOperation<TValue>> log, string transactionId, long lastLogTime)
+    internal void UpdateTransactionWithLog(string transactionId, IEnumerable<WriteOperation<TValue>> log, long lastLogTime)
     {
         var transaction = _transactions[transactionId];
 
-        transaction.LazySync(log, lastLogTime);
+        transaction.Sync(log, lastLogTime);
     }
 
     private void CreateTransaction(string transactionId)
@@ -100,5 +102,16 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
         var transaction = new Transaction<TValue>(transactionId, new Dictionary<string, TValue>(snapshot), Clock.GetTicks());
 
         _transactions.TryAdd(transactionId, transaction);
+    }
+
+    public void LazyUpdateTransactions(string exceptTransactionId, List<WriteOperation<TValue>> log, long lastLogTime)
+    {
+        Parallel.ForEach(_transactions.Values, (transaction, _) =>
+        {
+            if (transaction.Id != exceptTransactionId)
+            {
+                transaction.LazySync(log, lastLogTime);
+            }
+        });
     }
 }

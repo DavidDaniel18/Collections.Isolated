@@ -8,7 +8,7 @@ namespace Collections.Isolated.Registration;
 
 public static class ServiceRegistration
 {
-    internal static int TransactionTimeoutInMs = 10_000;
+    internal static int TransactionTimeoutInMs = 60_000;
 
     public static IServiceCollection AddIsolatedCollections(this IServiceCollection collection, int transactionTimeoutInMs = -1)
     {

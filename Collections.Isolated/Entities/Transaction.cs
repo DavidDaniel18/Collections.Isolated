@@ -1,4 +1,5 @@
-﻿using Collections.Isolated.Synchronisation;
+﻿using System.Collections.Immutable;
+using Collections.Isolated.Synchronisation;
 using Collections.Isolated.ValueObjects.Commands;
 
 namespace Collections.Isolated.Entities;
@@ -84,7 +85,7 @@ internal sealed class Transaction<TValue> where TValue : class
         _scheduler.Schedule(() => Operations.Clear(), IsolationScheduler.Priority.High);
     }
 
-    internal TValue? Get(string key)
+    internal async Task<TValue?> GetAsync(string key)
     {
         var taskCompletionSource = new TaskCompletionSource<TValue?>();
 
@@ -103,45 +104,59 @@ internal sealed class Transaction<TValue> where TValue : class
 
         }, IsolationScheduler.Priority.High);
 
-        return taskCompletionSource.Task.Result;
+        return await taskCompletionSource.Task.ConfigureAwait(false);
     }
 
-    internal Dictionary<string, WriteOperation<TValue>> GetOperations()
+    internal async Task<Dictionary<string, WriteOperation<TValue>>> GetOperationsAsync()
     {
         var taskCompletionSource = new TaskCompletionSource<Dictionary<string, WriteOperation<TValue>>>();
 
         _scheduler.Schedule(() => taskCompletionSource.SetResult(Operations), IsolationScheduler.Priority.High);
 
-        return taskCompletionSource.Task.Result;
+        return await taskCompletionSource.Task.ConfigureAwait(false);
     }
 
-    internal void LazySync(Dictionary<string, WriteOperation<TValue>> operationsToProcess, long commitTime)
+
+    internal void Sync(IEnumerable<WriteOperation<TValue>> operationsToProcess, long commitTime)
+    {
+        _scheduler.Schedule(() => SyncNewerLogs(operationsToProcess, commitTime), IsolationScheduler.Priority.High);
+    }
+
+    internal void LazySync(IEnumerable<WriteOperation<TValue>> operationsToProcess, long commitTime)
     {
         _scheduler.Schedule(() =>
         {
-            var newOperations = operationsToProcess.Where(op =>
+            SyncNewerLogs(operationsToProcess, commitTime);
+
+            foreach (var operations in Operations.Values)
             {
-                if (Operations.TryGetValue(op.Key, out var persistedOperation))
-                {
-                    var persistedTicks = persistedOperation.CreationTime;
+                operations.Apply(Snapshot);
+            }
+        }, IsolationScheduler.Priority.Medium);
+    }
 
-                    var operationTicks = op.Value.CreationTime;
-
-                    // we only want to apply operations that are newer than the persisted ones
-                    return operationTicks > persistedTicks;
-                }
-
-                // we only want to apply operations that are newer than the transaction
-                return commitTime > _creationTime;
-            });
-
-            foreach (var operation in newOperations)
+    private void SyncNewerLogs(IEnumerable<WriteOperation<TValue>> operationsToProcess, long commitTime)
+    {
+        var newOperations = operationsToProcess.Where(op =>
+        {
+            if (Operations.TryGetValue(op.Key, out var persistedOperation))
             {
-                AddWriteOperationUnsafe(operation.Value.LazyDeepCloneValue());
+                var persistedTicks = persistedOperation.CreationTime;
+
+                var operationTicks = op.CreationTime;
+
+                // we only want to apply operations that are newer than the persisted ones
+                return operationTicks > persistedTicks;
             }
 
-        }, IsolationScheduler.Priority.High);
-        
+            // we only want to apply operations that are newer than the transaction
+            return commitTime > _creationTime;
+        });
+
+        foreach (var operation in newOperations)
+        {
+            AddWriteOperationUnsafe(operation.LazyDeepCloneValue());
+        }
     }
 
     private void AddWriteOperationUnsafe(WriteOperation<TValue> writeOperation)

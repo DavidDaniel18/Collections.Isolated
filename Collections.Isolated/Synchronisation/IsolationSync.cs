@@ -1,4 +1,5 @@
-﻿using Collections.Isolated.Entities;
+﻿using System.Collections.Immutable;
+using Collections.Isolated.Entities;
 using Collections.Isolated.Interfaces;
 using Collections.Isolated.ValueObjects.Commands;
 
@@ -20,7 +21,7 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue> where TV
 
         await AttemptLockAcquisition(transactionId);
 
-        return _dictionary.Get(key, transactionId);
+        return await _dictionary.GetAsync(key, transactionId);
     }
 
     public void AddOrUpdate(string key, TValue value, string transactionId)
@@ -83,6 +84,10 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue> where TV
 
     private void LockAcquired(string transactionId)
     {
-        _dictionary.UpdateTransactionWithLog(_log, transactionId, Interlocked.Read(ref _lastLogTime));
+        var logSnapshot = _log.Values.ToList();
+
+        var lastLogTime = Interlocked.Read(ref _lastLogTime);
+
+        _dictionary.UpdateTransactionWithLog(transactionId, logSnapshot, lastLogTime);
     }
 }
