@@ -27,7 +27,7 @@ public sealed class BenchmarkTests : IntegrationTest
 
         // Test custom dictionary add
         stopwatch.Start();
-        customDictionary.AddOrUpdate("key", "value");
+        customDictionary.AddOrUpdateAsync("key", "value");
         stopwatch.Stop();
         var customAddTime = stopwatch.ElapsedTicks;
 
@@ -55,7 +55,7 @@ public sealed class BenchmarkTests : IntegrationTest
 
         // Test custom dictionary add
         stopwatch.Start();
-        customDictionary.AddOrUpdate("key", "value");
+        customDictionary.AddOrUpdateAsync("key", "value");
         stopwatch.Stop();
         var customAddTime = stopwatch.ElapsedTicks;
 
@@ -82,7 +82,7 @@ public sealed class BenchmarkTests : IntegrationTest
         var stopwatch = new Stopwatch();
 
         // Prepare - ensure both dictionaries have the item to retrieve
-        customDictionary.AddOrUpdate("key", "value");
+        customDictionary.AddOrUpdateAsync("key", "value");
         customDictionary.SaveChangesAsync();
 
         // Test custom dictionary get
@@ -114,7 +114,7 @@ public sealed class BenchmarkTests : IntegrationTest
         var stopwatch = new Stopwatch();
 
         // Prepare - ensure both dictionaries have the item to retrieve
-        customDictionary.AddOrUpdate("key", "value");
+        customDictionary.AddOrUpdateAsync("key", "value");
         await customDictionary.SaveChangesAsync();
         standardDictionary.TryAdd("key", "value");
 

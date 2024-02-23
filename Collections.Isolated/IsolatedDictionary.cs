@@ -1,8 +1,8 @@
 ﻿using System.Collections.Concurrent;
-using System.Collections.Immutable;
-using System.Transactions;
 using Collections.Isolated.Entities;
+using Collections.Isolated.ValueObjects;
 using Collections.Isolated.ValueObjects.Commands;
+using static System.Formats.Asn1.AsnWriter;
 
 namespace Collections.Isolated;
 
@@ -12,17 +12,18 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
 
     private readonly ConcurrentDictionary<string, Transaction<TValue>> _transactions = new();
 
-    internal IReadOnlyDictionary<string, WriteOperation<TValue>> SaveChangesAsync(string transactionId)
+    internal IReadOnlyDictionary<string, WriteOperation<TValue>> SaveChanges(string transactionId)
     {
         var transaction = _transactions[transactionId];
 
         _transactions.Remove(transaction.Id, out _);
 
-        transaction.Apply();
-
         var operations = transaction.GetOperations();
 
-        _dictionary = new ConcurrentDictionary<string, TValue>(transaction.Snapshot);
+        foreach (var operation in operations.Values)
+        {
+            operation.Apply(_dictionary);
+        }
 
         return operations;
     }
@@ -53,13 +54,6 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
         transaction.AddRemoveOperation(key);
     }
 
-    public void BatchAddOrUpdate(IEnumerable<(string key, TValue value)> items, string transactionId)
-    {
-        var transaction = _transactions[transactionId];
-
-        transaction.AddOrUpdateBatchOperation(items);
-    }
-
     internal void UndoChanges(string transactionId)
     {
         if (_transactions.TryRemove(transactionId, out var transaction))
@@ -68,11 +62,11 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
         }
     }
 
-    internal void EnsureTransactionCreated(string transactionId)
+    internal void EnsureTransactionCreated(IntentionLock transactionLock)
     {
-        if(ContainsTransaction(transactionId) is false)
+        if(ContainsTransaction(transactionLock.TransactionId) is false)
         {
-            CreateTransaction(transactionId);
+            CreateTransaction(transactionLock);
         }
     }
 
@@ -88,17 +82,27 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
         transaction.Sync(log, lastLogTime);
     }
 
-    private void CreateTransaction(string transactionId)
+    private void CreateTransaction(IntentionLock transactionLock)
     {
         var snapshot = new Dictionary<string, TValue>();
 
-        foreach (var (key, value) in _dictionary)
+        if (transactionLock.KeysToLock.Length == 0)
         {
-            snapshot.Add(key, value);
+            foreach (var (key, value) in _dictionary)
+            {
+                snapshot.Add(key, value);
+            }
+        }
+        else
+        {
+            foreach (var key in transactionLock.KeysToLock)
+            {
+                snapshot.Add(key, _dictionary[key]);
+            }
         }
 
-        var transaction = new Transaction<TValue>(transactionId, new Dictionary<string, TValue>(snapshot), Clock.GetTicks());
+        var transaction = new Transaction<TValue>(transactionLock.TransactionId, new Dictionary<string, TValue>(snapshot), Clock.GetTicks());
 
-        _transactions.TryAdd(transactionId, transaction);
+        _transactions.TryAdd(transactionLock.TransactionId, transaction);
     }
 }

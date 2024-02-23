@@ -1,6 +1,4 @@
-﻿using System.Collections.Immutable;
-using Collections.Isolated.Synchronisation;
-using Collections.Isolated.ValueObjects.Commands;
+﻿using Collections.Isolated.ValueObjects.Commands;
 
 namespace Collections.Isolated.Entities;
 
@@ -27,16 +25,6 @@ internal sealed class Transaction<TValue> where TValue : class
         var writeOperation = new AddOrUpdate<TValue>(key, value, Clock.GetTicks());
 
         AddWriteOperationUnsafe(writeOperation);
-    }
-
-    public void AddOrUpdateBatchOperation(IEnumerable<(string key, TValue value)> items)
-    {
-        var writeOperations = items.Select(item => new AddOrUpdate<TValue>(item.key, item.value, Clock.GetTicks()));
-
-        foreach (var writeOperation in writeOperations)
-        {
-            AddWriteOperationUnsafe(writeOperation);
-        }
     }
 
     public void AddRemoveOperation(string key)

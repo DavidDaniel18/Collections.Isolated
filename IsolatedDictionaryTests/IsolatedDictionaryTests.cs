@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Collections.Isolated.Abstractions;
-using Collections.Isolated.Context;
+using Collections.Isolated.Enums;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Xunit.Abstractions;
@@ -19,7 +20,7 @@ namespace IsolatedDictionaryTests
         {
             var dictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
 
-            dictionary.AddOrUpdate("key", "value");
+            await dictionary.AddOrUpdateAsync("key", "value");
 
             Assert.Equal("value", await dictionary.TryGetAsync("key"));
         }
@@ -31,7 +32,7 @@ namespace IsolatedDictionaryTests
 
             var dictionary2 = Scope2!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
 
-            dictionary.AddOrUpdate("key", "value");
+            await dictionary.AddOrUpdateAsync("key", "value");
 
             Task.Run(() =>
             {
@@ -42,7 +43,7 @@ namespace IsolatedDictionaryTests
 
             var getAsync = await dictionary2.TryGetAsync("key");
 
-            Assert.Equal(null, getAsync);
+            Assert.Equal("value", getAsync);
         }
 
         [Fact]
@@ -52,11 +53,11 @@ namespace IsolatedDictionaryTests
 
             var dictionary2 = Scope2!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
 
-            dictionary.AddOrUpdate("key", "value");
+            await dictionary.AddOrUpdateAsync("key", "value");
 
             await dictionary.SaveChangesAsync();
 
-            dictionary2.AddOrUpdate("key", "value-modified");
+            await dictionary2.AddOrUpdateAsync("key", "value-modified");
 
             await dictionary2.SaveChangesAsync();
 
@@ -72,11 +73,11 @@ namespace IsolatedDictionaryTests
 
             var dictionary2 = Scope2!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
 
-            dictionary.AddOrUpdate("key", "value");
+            await dictionary.AddOrUpdateAsync("key", "value");
 
             await dictionary.SaveChangesAsync();
 
-            dictionary2.Remove("key");
+            await dictionary2.RemoveAsync("key");
 
             await dictionary2.SaveChangesAsync();
 
@@ -92,11 +93,11 @@ namespace IsolatedDictionaryTests
 
             var dictionary2 = Scope2!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
 
-            dictionary.AddOrUpdate("key", "value");
+            await dictionary.AddOrUpdateAsync("key", "value");
 
             await dictionary.SaveChangesAsync();
 
-            dictionary2.AddOrUpdate("key", "value2");
+            await dictionary2.AddOrUpdateAsync("key", "value2");
 
             Assert.Equal("value2", await dictionary2.TryGetAsync("key"));
 
@@ -127,7 +128,7 @@ namespace IsolatedDictionaryTests
 
             foreach (var kv in dict)
             {
-                dictionary.AddOrUpdate(kv.Key, kv.Value);
+                await dictionary.AddOrUpdateAsync(kv.Key, kv.Value);
             }
 
             logger.LogInformation($"AddOrUpdateAsync: {stopwatch.ElapsedTicks}");
@@ -148,43 +149,6 @@ namespace IsolatedDictionaryTests
         }
 
         [Fact]
-        public async Task SaveChanges_batch_Concurrency()
-        {
-            const int count = 1_000;
-
-            Stopwatch stopwatch = new();
-
-            var dictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
-
-            var dictionary2 = Scope2!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
-
-            var logger = Scope2!.ServiceProvider.GetRequiredService<ILogger<IDictionaryContext<string>>>();
-
-            Dictionary<string, string> dict = new();
-
-            for (int i = 0; i < count; i++)
-            {
-                dict.Add(i.ToString(), i.ToString());
-            }
-
-            stopwatch.Start();
-
-            dictionary.AddOrUpdateRange(dict.Select(kv => (kv.Key, kv.Value)).ToList());
-
-            logger.LogInformation($"AddOrUpdateAsync: {stopwatch.Elapsed}");
-
-            await dictionary.SaveChangesAsync();
-
-            logger.LogInformation($"SaveChangesAsync: {stopwatch.Elapsed}");
-
-            var dictCount = await dictionary2.CountAsync();
-
-            logger.LogInformation($"QueryAsync: {stopwatch.Elapsed}");
-
-            Assert.Equal(count, dictCount);
-        }
-
-        [Fact]
         public async Task DeepClones()
         {
             var dictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<HeapAllocation>>();
@@ -193,7 +157,7 @@ namespace IsolatedDictionaryTests
 
             var heapAllocation = new HeapAllocation() { Value = "value"};
 
-            dictionary.AddOrUpdate("key", heapAllocation);
+            await dictionary.AddOrUpdateAsync("key", heapAllocation);
 
             await dictionary.SaveChangesAsync();
 
@@ -214,7 +178,7 @@ namespace IsolatedDictionaryTests
             var dictionary2 = Scope2!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
 
             // Transaction 1 updates 'key1' and commits the change
-            dictionary1.AddOrUpdate("key1", "value1");
+            await dictionary1.AddOrUpdateAsync("key1", "value1");
             await dictionary1.SaveChangesAsync(); // Ensure the change is committed
 
             // Transaction 2 begins after Transaction 1's commit, ensuring visibility of 'key1's update
@@ -222,18 +186,13 @@ namespace IsolatedDictionaryTests
             Assert.Equal("value1", key1Value); // 'key1' update by Transaction 1 should be visible to Transaction 2
 
             // Transaction 2 updates 'key2' based on 'key1's committed value, then updates 'key1'
-            dictionary2.AddOrUpdate("key2", key1Value + "+updateFromT2");
-            dictionary2.AddOrUpdate("key1", "value1UpdatedByT2");
+            await dictionary2.AddOrUpdateAsync("key2", key1Value + "+updateFromT2");
+            await dictionary2.AddOrUpdateAsync("key1", "value1UpdatedByT2");
             await dictionary2.SaveChangesAsync(); // Commit Transaction 2's changes
 
             // Verify the final state reflects the sequential updates from both transactions
             var finalKey1Value = await dictionary1.TryGetAsync("key1");
             var finalKey2Value = await dictionary1.TryGetAsync("key2");
-
-            if (finalKey1Value.Equals("value1UpdatedByT2") is false)
-            {
-                Console.WriteLine();
-            }
 
             Assert.Equal("value1UpdatedByT2", finalKey1Value); // Reflects Transaction 2's update
             Assert.Equal("value1+updateFromT2", finalKey2Value); // Reflects Transaction 2's dependent update on 'key2'
@@ -250,7 +209,7 @@ namespace IsolatedDictionaryTests
             // Prepopulate the dictionary with initial values
             for (int i = 0; i < numberOfTransactions * numberOfKeysPerTransaction; i++)
             {
-                rootDictionary.AddOrUpdate($"key{i}",new HeapAllocation(){Value = $"initial{i}"});
+                await rootDictionary.AddOrUpdateAsync($"key{i}",new HeapAllocation(){Value = $"initial{i}"});
             }
             await rootDictionary.SaveChangesAsync();
 
@@ -266,6 +225,8 @@ namespace IsolatedDictionaryTests
 
             // Wait for all transactions to complete
             await Task.WhenAll(transactionTasks);
+
+            rootDictionary.StateIntent([], true);
 
             // Validate the final state of the dictionary
             for (int i = 0; i < numberOfTransactions * numberOfKeysPerTransaction; i++)
@@ -284,6 +245,8 @@ namespace IsolatedDictionaryTests
                 using var scope = CreateScope();
                 var localDictionary = scope.ServiceProvider.GetRequiredService<IDictionaryContext<HeapAllocation>>();
 
+                var keyValuePairs = new Dictionary<string, string>();
+
                 // Each transaction reads, modifies, and updates a set of keys
                 for (int k = 0; k < nbKeyPerTransaction; k++)
                 {
@@ -292,14 +255,102 @@ namespace IsolatedDictionaryTests
                     string key = $"key{keyIndex}";
                     string newValue = $"updatedByTransaction{t1}";
 
-                    // Simulate read-modify-write cycle within the transaction scope
-                    var currentValue = await localDictionary.TryGetAsync(key);
+                    keyValuePairs.Add(key, newValue);
+                }
 
-                    var updatedValue = $"{currentValue?.Value??"default"}+{newValue}";
-                    localDictionary.AddOrUpdate(key, new HeapAllocation() {Value = updatedValue});
+                localDictionary.StateIntent(keyValuePairs.Keys, false);
+
+                foreach (var kv in keyValuePairs)
+                {
+                    // Simulate read-modify-write cycle within the transaction scope
+                    var currentValue = await localDictionary.TryGetAsync(kv.Key);
+
+                    var updatedValue = $"{currentValue?.Value ?? "default"}+{kv.Value}";
+                    await localDictionary.AddOrUpdateAsync(kv.Key, new HeapAllocation() { Value = updatedValue });
                 }
 
                 await localDictionary.SaveChangesAsync();
+
+            }
+        }
+
+        [Fact]
+        public async Task HighConcurrencyStressTestWithScopedTransactions_strings()
+        {
+            const int numberOfTransactions = 100; // Number of concurrent transactions
+            const int numberOfKeysPerTransaction = 10; // Keys operated on by each transaction
+            var rootDictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+            var logger = Scope!.ServiceProvider.GetRequiredService<ILogger<IDictionaryContext<string>>>();
+            // Prepopulate the dictionary with initial values
+            for (int i = 0; i < numberOfTransactions * numberOfKeysPerTransaction; i++)
+            {
+                await rootDictionary.AddOrUpdateAsync($"key{i}", $"initial{i}" );
+            }
+            await rootDictionary.SaveChangesAsync();
+
+            // Define a task for each transaction, each within its own scope
+            var transactionTasks = new List<Task>();
+            for (int t = 0; t < numberOfTransactions; t++)
+            {
+                var t1 = t;
+
+                var transactionTask = Task.Run(async () => await Function(t1, numberOfKeysPerTransaction, numberOfTransactions));
+                transactionTasks.Add(transactionTask);
+            }
+
+            // Wait for all transactions to complete
+            await Task.WhenAll(transactionTasks);
+
+            rootDictionary.StateIntent([], true);
+
+            // Validate the final state of the dictionary
+            for (int i = 0; i < numberOfTransactions * numberOfKeysPerTransaction; i++)
+            {
+                string key = $"key{i}";
+                var value = await rootDictionary.TryGetAsync(key);
+                // Ensure that the value reflects updates from one or more transactions.
+                Assert.Contains($"updatedByTransaction", value); // Simplified check; adjust based on expected outcome
+            }
+
+            await rootDictionary.SaveChangesAsync();
+
+            async Task Function(int t1, int nbKeyPerTransaction, int nbOfTransaction)
+            {
+                // Create a new scope for each transaction
+                using var scope = CreateScope();
+                var localDictionary = scope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+                var stopwatch = new Stopwatch();
+
+                var keyValuePairs = new Dictionary<string, string>();
+
+                // Each transaction reads, modifies, and updates a set of keys
+                for (int k = 0; k < nbKeyPerTransaction; k++)
+                {
+                    int keyIndex = (t1 * nbKeyPerTransaction + k) % (nbOfTransaction * nbKeyPerTransaction);
+
+                    string key = $"key{keyIndex}";
+                    string newValue = $"updatedByTransaction{t1}";
+
+                    keyValuePairs.Add(key, newValue);
+                }
+
+
+                localDictionary.StateIntent(keyValuePairs.Keys, false);
+
+                foreach (var kv in keyValuePairs)
+                {
+                    // Simulate read-modify-write cycle within the transaction scope
+                    var currentValue = await localDictionary.TryGetAsync(kv.Key).ConfigureAwait(false);
+
+                    var updatedValue = $"{currentValue}+{kv.Value}";
+                    await localDictionary.AddOrUpdateAsync(kv.Key, updatedValue).ConfigureAwait(false);
+                }
+
+                stopwatch.Start();
+
+                await localDictionary.SaveChangesAsync().ConfigureAwait(false);
+
+                logger.LogInformation(stopwatch.ElapsedTicks.ToString());
             }
         }
 
@@ -316,7 +367,7 @@ namespace IsolatedDictionaryTests
                 var setupDictionary = setupScope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
                 for (int i = 0; i < numberOfKeys; i++)
                 {
-                    setupDictionary.AddOrUpdate($"key{i}", $"value{i}");
+                    await setupDictionary.AddOrUpdateAsync($"key{i}", $"value{i}");
                 }
                 await setupDictionary.SaveChangesAsync();
             }
@@ -330,7 +381,7 @@ namespace IsolatedDictionaryTests
                     for (int i = 0; i < numberOfKeys / 10; i++)
                     {
                         var keyIndex = random.Next(0, numberOfKeys);
-                        transactionDictionary.AddOrUpdate($"key{keyIndex}", $"value{keyIndex}-modified");
+                        await transactionDictionary.AddOrUpdateAsync($"key{keyIndex}", $"value{keyIndex}-modified");
                     }
                     await transactionDictionary.SaveChangesAsync();
                 }

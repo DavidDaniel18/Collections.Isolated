@@ -1,4 +1,6 @@
 ﻿using Collections.Isolated.Abstractions;
+using Collections.Isolated.Entities;
+using Collections.Isolated.Enums;
 using Collections.Isolated.Interfaces;
 
 namespace Collections.Isolated.Context;
@@ -6,40 +8,72 @@ namespace Collections.Isolated.Context;
 public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictionary) : IDictionaryContext<TValue>, IDisposable
     where TValue : class
 {
-    private readonly string _id = Guid.NewGuid().ToString();
+    private IntentionLock _intentionLock = new (
+        Guid.NewGuid().ToString(),
+        [],
+        Intent.Write,
+        new TaskCompletionSource<bool>());
 
-    public void AddOrUpdate(string key, TValue value)
+    private bool _disposed;
+
+    public void StateIntent(IEnumerable<string> keys, bool readOnly)
     {
-        dictionary.AddOrUpdate(key, value, _id);
+        _intentionLock = _intentionLock with
+        {
+            KeysToLock = keys.ToArray(), Intent = readOnly ? Intent.Read : Intent.Write
+        };
     }
 
-    public void AddOrUpdateRange(IEnumerable<(string key, TValue value)> items)
+    public async Task AddOrUpdateAsync(string key, TValue value)
     {
-        dictionary.BatchApplyOperation(items, _id);
+        RenewTransaction();
+
+        await dictionary.AddOrUpdateAsync(key, value, _intentionLock);
     }
 
-    public void Remove(string key)
+    public async Task RemoveAsync(string key)
     {
-        dictionary.Remove(key, _id);
+        RenewTransaction();
+
+        await dictionary.RemoveAsync(key, _intentionLock);
     }
 
     public async Task<int> CountAsync()
     {
-        return await dictionary.CountAsync(_id);
+        RenewTransaction();
+
+        return await dictionary.CountAsync(_intentionLock);
     }
 
     public async Task<TValue?> TryGetAsync(string key)
     {
-        return await dictionary.GetAsync(key, _id);
+        RenewTransaction();
+
+        return await dictionary.GetAsync(key, _intentionLock);
     }
 
     public async Task SaveChangesAsync()
     {
-        await dictionary.SaveChangesAsync(_id);
+        RenewTransaction();
+
+        await dictionary.SaveChangesAsync(_intentionLock);
+
+        _disposed = true;
     }
 
     public void Dispose()
     {
-        dictionary.UndoChanges(_id);
+        dictionary.UndoChanges(_intentionLock);
+
+        _disposed = true;
+    }
+
+    private void RenewTransaction()
+    {
+        if (_disposed)
+        {
+            _disposed = false;
+            _intentionLock = _intentionLock with { TaskCompletionSource = new TaskCompletionSource<bool>() };
+        }
     }
 }
