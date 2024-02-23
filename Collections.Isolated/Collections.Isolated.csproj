@@ -4,8 +4,22 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-  <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+	<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+	  <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+	  <Version>1.0.0</Version>
+	  <PackageOutputPath>..\Nuget\</PackageOutputPath>
+	  <GenerateDocumentationFile>true</GenerateDocumentationFile>
+	  <DocumentationFile>$(MSBuildProjectName).xml</DocumentationFile>
   </PropertyGroup>
+
+	<ItemGroup>
+		<None Include="$(MSBuildProjectName).xml" Pack="true" PackagePath="..\Nuget\" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Remove="Collections.Isolated.xml" />
+		<None Remove="Collections.Isolated.xml" />
+	</ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="DeepCloner" Version="0.10.4" />

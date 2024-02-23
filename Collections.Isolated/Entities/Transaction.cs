@@ -4,19 +4,19 @@ namespace Collections.Isolated.Entities;
 
 internal sealed class Transaction<TValue> where TValue : class
 {
-    public string Id { get; }
+    internal string Id { get; }
 
     //we compress the log to only show applied values
     private Dictionary<string, WriteOperation<TValue>> Operations { get; } = new();
 
-    internal readonly Dictionary<string, TValue> Snapshot;
+    private readonly Dictionary<string, TValue> _snapshot;
 
     private readonly long _creationTime;
 
     internal Transaction(string id, Dictionary<string, TValue> snapshot, long creationTime)
     {
         Id = id;
-        Snapshot = snapshot;
+        _snapshot = snapshot;
         _creationTime = creationTime;
     }
 
@@ -36,7 +36,7 @@ internal sealed class Transaction<TValue> where TValue : class
 
     internal void Apply()
     {
-        ApplyChangesUnsafe(Snapshot);
+        ApplyChangesUnsafe(_snapshot);
     }
 
     internal void Clear()
@@ -51,7 +51,7 @@ internal sealed class Transaction<TValue> where TValue : class
             return addOrUpdate.LazyValue;
         }
 
-        return Snapshot.GetValueOrDefault(key);
+        return _snapshot.GetValueOrDefault(key);
     }
 
     internal IReadOnlyDictionary<string, WriteOperation<TValue>> GetOperations()
@@ -80,7 +80,7 @@ internal sealed class Transaction<TValue> where TValue : class
 
         foreach (var operation in newOperations)
         {
-            AddWriteOperationUnsafe(operation.LazyDeepCloneValue());
+            AddWriteOperationUnsafe(operation);
         }
     }
 

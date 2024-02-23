@@ -24,7 +24,7 @@ public sealed class IntegrationWebApplicationFactory(IntegrationWebApplicationFa
             {
                 services.AddSingleton(outputHelper);
 
-                services.AddIsolatedCollections();
+                services.AddIsolatedDictionary();
             })
             .ConfigureLogging(loggingBuilder =>
             {

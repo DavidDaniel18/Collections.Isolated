@@ -14,4 +14,6 @@ public interface IDictionaryContext<TValue>
     Task<TValue?> TryGetAsync(string key);
 
     Task SaveChangesAsync();
+
+    void RollBack();
 }

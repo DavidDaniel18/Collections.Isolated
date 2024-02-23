@@ -6,9 +6,4 @@ internal sealed record Remove<TValue>(string Key, long CreationTime) : WriteOper
     {
         dictionary.Remove(Key);
     }
-
-    internal override WriteOperation<TValue> LazyDeepCloneValue()
-    {
-        return new Remove<TValue>(Key, CreationTime);
-    }
 }

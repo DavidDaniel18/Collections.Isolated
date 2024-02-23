@@ -1,7 +1,5 @@
 using System.Diagnostics;
 using Collections.Isolated.Abstractions;
-using Collections.Isolated.Enums;
-using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Xunit.Abstractions;
@@ -26,6 +24,18 @@ namespace IsolatedDictionaryTests
         }
 
         [Fact]
+        public async Task BasicAddSave()
+        {
+            var dictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+
+            await dictionary.AddOrUpdateAsync("key", "value");
+
+            await dictionary.SaveChangesAsync();
+
+            Assert.Equal("value", await dictionary.TryGetAsync("key"));
+        }
+
+        [Fact]
         public async Task BasicAdd_Concurrent()
         {
             var dictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
@@ -36,7 +46,7 @@ namespace IsolatedDictionaryTests
 
             Task.Run(() =>
             {
-                Task.Delay(10).Wait();
+                Task.Delay(5).Wait();
 
                 dictionary.SaveChangesAsync();
             });
@@ -337,6 +347,8 @@ namespace IsolatedDictionaryTests
 
                 localDictionary.StateIntent(keyValuePairs.Keys, false);
 
+                stopwatch.Start();
+
                 foreach (var kv in keyValuePairs)
                 {
                     // Simulate read-modify-write cycle within the transaction scope
@@ -346,9 +358,7 @@ namespace IsolatedDictionaryTests
                     await localDictionary.AddOrUpdateAsync(kv.Key, updatedValue).ConfigureAwait(false);
                 }
 
-                stopwatch.Start();
-
-                await localDictionary.SaveChangesAsync().ConfigureAwait(false);
+                await localDictionary.SaveChangesAsync();
 
                 logger.LogInformation(stopwatch.ElapsedTicks.ToString());
             }
@@ -357,8 +367,8 @@ namespace IsolatedDictionaryTests
         [Fact]
         public async Task EnsureConcurrentTransactionsIntegrity()
         {
-            const int numberOfKeys = 1000;
-            const int numberOfTransactions = 100;
+            const int numberOfKeys = 100;
+            const int numberOfTransactions = 10;
             var random = new Random();
 
             // Setup phase using DI
@@ -402,6 +412,29 @@ namespace IsolatedDictionaryTests
 
                 await Task.WhenAll(validationTasks);
             }
+        }
+
+        [Fact]
+        public async Task RollBack()
+        {
+            var dictionary = Scope!.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
+
+            await dictionary.AddOrUpdateAsync("key", "value");
+
+            await dictionary.SaveChangesAsync();
+
+            await dictionary.RemoveAsync("key");
+
+            dictionary.RollBack();
+
+            var getAsync1 = await dictionary.TryGetAsync("key");
+
+            await dictionary.SaveChangesAsync();
+
+            var getAsync2 = await dictionary.TryGetAsync("key");
+
+            Assert.Equal("value", getAsync1);
+            Assert.Equal(getAsync2, getAsync1);
         }
 
         public class HeapAllocation

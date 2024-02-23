@@ -1,0 +1,116 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>Collections.Isolated</name>
+    </assembly>
+    <members>
+        <member name="T:Collections.Isolated.Context.DictionaryContext`1">
+            <summary>
+            The DictionaryContext acts as a transactional wrapper around the IIsolatedDictionary. Providing a Unit of Work pattern.
+            This class is not thread safe. It is designed to be used in a scoped context.
+            It is important to call SaveChangesAsync to persist changes to the dictionary.
+            </summary>
+            <param name="dictionary">Furfilled by Asp.net Core using dependency injection.</param>
+            <typeparam name="TValue">The type of value to store.</typeparam>
+        </member>
+        <member name="M:Collections.Isolated.Context.DictionaryContext`1.#ctor(Collections.Isolated.Interfaces.IIsolatedDictionary{`0})">
+            <summary>
+            The DictionaryContext acts as a transactional wrapper around the IIsolatedDictionary. Providing a Unit of Work pattern.
+            This class is not thread safe. It is designed to be used in a scoped context.
+            It is important to call SaveChangesAsync to persist changes to the dictionary.
+            </summary>
+            <param name="dictionary">Furfilled by Asp.net Core using dependency injection.</param>
+            <typeparam name="TValue">The type of value to store.</typeparam>
+        </member>
+        <member name="M:Collections.Isolated.Context.DictionaryContext`1.StateIntent(System.Collections.Generic.IEnumerable{System.String},System.Boolean)">
+            <summary>
+            Locks the dictionary for the given keys with the given intention. Significant performance improvements can be made by using this method.
+            Avoids the need to lock the entire dictionary.
+            May only be called once per transaction.
+            </summary>
+            <param name="keys">The intented keys to lock for the duration of this transaction</param>
+            <param name="readOnly">Keys in Readonly necessitate lighter locking than those with Write intent</param>
+            <exception cref="T:System.InvalidOperationException">Throws when <see cref="M:Collections.Isolated.Context.DictionaryContext`1.StateIntent(System.Collections.Generic.IEnumerable{System.String},System.Boolean)"/> is called more than once during the lifetime of a transaction</exception>
+        </member>
+        <member name="M:Collections.Isolated.Context.DictionaryContext`1.AddOrUpdateAsync(System.String,`0)">
+            <summary>
+            Adds or updates a value in the dictionary. Async since it may require a lock.
+            </summary>
+            <param name="key">String key to add or update</param>
+            <param name="value">Value to add or update</param>
+            <exception cref="T:System.InvalidOperationException">Throws when <see cref="M:Collections.Isolated.Context.DictionaryContext`1.StateIntent(System.Collections.Generic.IEnumerable{System.String},System.Boolean)"/> is more restrictive than the provided key and operation</exception>
+        </member>
+        <member name="M:Collections.Isolated.Context.DictionaryContext`1.RemoveAsync(System.String)">
+            <summary>
+            Removes a value from the dictionary if it is present. Async since it may require a lock.
+            </summary>
+            <param name="key">string key to look up</param>
+            <exception cref="T:System.InvalidOperationException">Throws when <see cref="M:Collections.Isolated.Context.DictionaryContext`1.StateIntent(System.Collections.Generic.IEnumerable{System.String},System.Boolean)"/> is more restrictive than the provided key and operation</exception>
+        </member>
+        <member name="M:Collections.Isolated.Context.DictionaryContext`1.CountAsync">
+            <summary>
+            Returns the number of elements in the dictionary. Async since it may require a lock.
+            May be very slow if there is contention since it locks the entire dictionary.
+            Note: This method creates a transaction and locks the entire dictionary.
+            </summary>
+            <exception cref="T:System.InvalidOperationException">Throws when <see cref="M:Collections.Isolated.Context.DictionaryContext`1.StateIntent(System.Collections.Generic.IEnumerable{System.String},System.Boolean)"/> is more restrictive than the provided key and operation</exception>
+        </member>
+        <member name="M:Collections.Isolated.Context.DictionaryContext`1.TryGetAsync(System.String)">
+            <summary>
+            Gets a value from the dictionary if it is present. Async since it may require a lock.
+            Gives deep copies of the main storage, avoiding mutations by reference. Local transactions are not deep copied.
+            </summary>
+            <param name="key">String key to look up</param>
+        </member>
+        <member name="M:Collections.Isolated.Context.DictionaryContext`1.SaveChangesAsync">
+            <summary>
+            Persists changes to the dictionary. Async since it may require a lock.
+            Resets the transaction.
+            </summary>
+        </member>
+        <member name="M:Collections.Isolated.Context.DictionaryContext`1.RollBack">
+            <summary>
+            Undo changes to the dictionary made during this transaction. Resets the transaction.
+            </summary>
+        </member>
+        <member name="M:Collections.Isolated.Context.DictionaryContext`1.Dispose">
+            <summary>
+            Disposes of the transaction. Resets the transaction.
+            </summary>
+            <remarks>Do not use this if you're name isn't CLR</remarks>
+        </member>
+        <member name="T:Collections.Isolated.Entities.IntentionLock">
+            <summary>
+            For Dependency Injection Interfaces
+            </summary>
+        </member>
+        <member name="M:Collections.Isolated.Entities.IntentionLock.#ctor(System.String,System.Collections.Generic.HashSet{System.String},Collections.Isolated.Enums.Intent,System.Threading.Tasks.TaskCompletionSource{System.Boolean})">
+            <summary>
+            For Dependency Injection Interfaces
+            </summary>
+        </member>
+        <member name="T:Collections.Isolated.Enums.Intent">
+            <summary>
+            For Dependency Injection Interfaces
+            </summary>
+        </member>
+        <member name="T:Collections.Isolated.Interfaces.IIsolatedDictionary`1">
+            <summary>
+            Should not be used directly. Use <see cref="T:Collections.Isolated.Context.DictionaryContext`1"/> within a scope.
+            </summary>
+        </member>
+        <member name="T:Collections.Isolated.Registration.ServiceRegistration">
+            <summary>
+            Registers the Isolated Collections in the Dependency Injection Container
+            </summary>
+        </member>
+        <member name="M:Collections.Isolated.Registration.ServiceRegistration.AddIsolatedDictionary(Microsoft.Extensions.DependencyInjection.IServiceCollection,System.Int32)">
+            <summary>
+            Adds the Isolated Dictionary to the Dependency Injection Container
+            </summary>
+            <param name="collection">The IServiceCollection provided by <see cref="N:Microsoft.Extensions.DependencyInjection"/></param>
+            <param name="transactionTimeoutInMs">How long should a transaction wait for a lock before throwing an exception</param>
+            <returns></returns>
+        </member>
+    </members>
+</doc>

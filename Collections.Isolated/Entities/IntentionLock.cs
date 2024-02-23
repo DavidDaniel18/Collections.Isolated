@@ -2,4 +2,7 @@
 
 namespace Collections.Isolated.Entities;
 
-public sealed record IntentionLock(string TransactionId, string[] KeysToLock, Intent Intent, TaskCompletionSource<bool> TaskCompletionSource);
+/// <summary>
+/// For Dependency Injection Interfaces
+/// </summary>
+public sealed record IntentionLock(string TransactionId, HashSet<string> KeysToLock, Intent Intent, TaskCompletionSource<bool> TaskCompletionSource);

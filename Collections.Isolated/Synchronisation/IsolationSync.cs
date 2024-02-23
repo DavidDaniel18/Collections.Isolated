@@ -4,7 +4,7 @@ using Collections.Isolated.ValueObjects.Commands;
 
 namespace Collections.Isolated.Synchronisation;
 
-public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue> where TValue : class
+internal sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue> where TValue : class
 {
     private readonly IsolatedDictionary<TValue> _dictionary = new();
 
@@ -65,6 +65,8 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue> where TV
 
     public void UndoChanges(IntentionLock intentionLock)
     {
+        _selectiveRelease.Forfeit(intentionLock);
+
         _dictionary.UndoChanges(intentionLock.TransactionId);
     }
 

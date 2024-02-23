@@ -1,14 +1,12 @@
 ﻿using System.Collections.Concurrent;
 using Collections.Isolated.Entities;
-using Collections.Isolated.ValueObjects;
 using Collections.Isolated.ValueObjects.Commands;
-using static System.Formats.Asn1.AsnWriter;
 
 namespace Collections.Isolated;
 
 internal sealed class IsolatedDictionary<TValue> where TValue : class
 {
-    private ConcurrentDictionary<string, TValue> _dictionary = new();
+    private readonly ConcurrentDictionary<string, TValue> _dictionary = new();
 
     private readonly ConcurrentDictionary<string, Transaction<TValue>> _transactions = new();
 
@@ -86,7 +84,7 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
     {
         var snapshot = new Dictionary<string, TValue>();
 
-        if (transactionLock.KeysToLock.Length == 0)
+        if (transactionLock.KeysToLock.Count == 0)
         {
             foreach (var (key, value) in _dictionary)
             {
