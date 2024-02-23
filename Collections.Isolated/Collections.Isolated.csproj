@@ -10,6 +10,7 @@
 	  <PackageOutputPath>..\Nuget\</PackageOutputPath>
 	  <GenerateDocumentationFile>true</GenerateDocumentationFile>
 	  <DocumentationFile>$(MSBuildProjectName).xml</DocumentationFile>
+	  <PackageReadmeFile>Readme.md</PackageReadmeFile>
   </PropertyGroup>
 
 	<ItemGroup>
@@ -28,10 +29,7 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\Collections.Isolated.Abstractions\Collections.Isolated.Abstractions.csproj" />
+    <None Include="Readme.md" Pack="true" PackagePath="\"/>
   </ItemGroup>
 
 </Project>

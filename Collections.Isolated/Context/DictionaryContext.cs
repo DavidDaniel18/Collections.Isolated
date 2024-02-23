@@ -1,17 +1,10 @@
-﻿using Collections.Isolated.Abstractions;
-using Collections.Isolated.Entities;
+﻿using Collections.Isolated.Entities;
 using Collections.Isolated.Enums;
 using Collections.Isolated.Interfaces;
 
 namespace Collections.Isolated.Context;
 
-/// <summary>
-/// The DictionaryContext acts as a transactional wrapper around the IIsolatedDictionary. Providing a Unit of Work pattern.
-/// This class is not thread safe. It is designed to be used in a scoped context.
-/// It is important to call SaveChangesAsync to persist changes to the dictionary.
-/// </summary>
-/// <param name="dictionary">Furfilled by Asp.net Core using dependency injection.</param>
-/// <typeparam name="TValue">The type of value to store.</typeparam>
+/// <inheritdoc cref="IDictionaryContext{TValue}"/>
 public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictionary) : IDictionaryContext<TValue>, IDisposable
     where TValue : class
 {
@@ -25,15 +18,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
 
     private bool _intentStated;
 
-    /// <summary>
-    /// Locks the dictionary for the given keys with the given intention. Significant performance improvements can be made by using this method.
-    /// Avoids the need to lock the entire dictionary.
-    /// May only be called once per transaction.
-    /// </summary>
-    /// <param name="keys">The intented keys to lock for the duration of this transaction</param>
-    /// <param name="readOnly">Keys in Readonly necessitate lighter locking than those with Write intent</param>
-    /// <exception cref="InvalidOperationException">Throws when <see cref="StateIntent"/> is called more than once during the lifetime of a transaction</exception>
-
+    /// <inheritdoc cref="IDictionaryContext{TValue}.StateIntent"/>
     public void StateIntent(IEnumerable<string> keys, bool readOnly)
     {
         if (_intentStated)
@@ -47,12 +32,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
         };
     }
 
-    /// <summary>
-    /// Adds or updates a value in the dictionary. Async since it may require a lock.
-    /// </summary>
-    /// <param name="key">String key to add or update</param>
-    /// <param name="value">Value to add or update</param>
-    /// <exception cref="InvalidOperationException">Throws when <see cref="StateIntent"/> is more restrictive than the provided key and operation</exception>
+    /// <inheritdoc cref="IDictionaryContext{TValue}.AddOrUpdateAsync"/>
     public async Task AddOrUpdateAsync(string key, TValue value)
     {
         RenewTransaction();
@@ -65,11 +45,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
     }
 
 
-    /// <summary>
-    /// Removes a value from the dictionary if it is present. Async since it may require a lock.
-    /// </summary>
-    /// <param name="key">string key to look up</param>
-    /// <exception cref="InvalidOperationException">Throws when <see cref="StateIntent"/> is more restrictive than the provided key and operation</exception>
+    /// <inheritdoc cref="IDictionaryContext{TValue}.RemoveAsync"/>
     public async Task RemoveAsync(string key)
     {
         RenewTransaction();
@@ -81,12 +57,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
         await dictionary.RemoveAsync(key, _intentionLock);
     }
 
-    /// <summary>
-    /// Returns the number of elements in the dictionary. Async since it may require a lock.
-    /// May be very slow if there is contention since it locks the entire dictionary.
-    /// Note: This method creates a transaction and locks the entire dictionary.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">Throws when <see cref="StateIntent"/> is more restrictive than the provided key and operation</exception>
+    /// <inheritdoc cref="IDictionaryContext{TValue}.CountAsync"/>
     public async Task<int> CountAsync()
     {
         RenewTransaction();
@@ -97,11 +68,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
         return await dictionary.CountAsync(_intentionLock);
     }
 
-    /// <summary>
-    /// Gets a value from the dictionary if it is present. Async since it may require a lock.
-    /// Gives deep copies of the main storage, avoiding mutations by reference. Local transactions are not deep copied.
-    /// </summary>
-    /// <param name="key">String key to look up</param>
+    /// <inheritdoc cref="IDictionaryContext{TValue}.TryGetAsync"/>
     public async Task<TValue?> TryGetAsync(string key)
     {
         RenewTransaction();
@@ -111,10 +78,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
         return await dictionary.GetAsync(key, _intentionLock);
     }
 
-    /// <summary>
-    /// Persists changes to the dictionary. Async since it may require a lock.
-    /// Resets the transaction.
-    /// </summary>
+    /// <inheritdoc cref="IDictionaryContext{TValue}.SaveChangesAsync"/>
     public async Task SaveChangesAsync()
     {
         RenewTransaction();
@@ -126,9 +90,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
         _intentStated = false;
     }
 
-    /// <summary>
-    /// Undo changes to the dictionary made during this transaction. Resets the transaction.
-    /// </summary>
+    /// <inheritdoc cref="IDictionaryContext{TValue}.RollBack"/>
     public void RollBack()
     {
         Dispose();

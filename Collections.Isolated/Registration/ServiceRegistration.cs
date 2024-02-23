@@ -1,5 +1,4 @@
-﻿using Collections.Isolated.Abstractions;
-using Collections.Isolated.Context;
+﻿using Collections.Isolated.Context;
 using Collections.Isolated.Interfaces;
 using Collections.Isolated.Synchronisation;
 using Microsoft.Extensions.DependencyInjection;
