@@ -19,3 +19,46 @@ Upon acquiring a lock on a key, the transaction catches up to the latest data fo
 2. **Integrating Changes:** The transaction integrates these changes, updating its view of the data for the locked key to reflect the most current state. This ensures that any operation performed by the transaction is based on the latest data.
 
 3. **Proceeding with the Transaction:** With an updated view, the transaction can then safely proceed, applying its changes or making decisions based on the most current data available.
+
+## Usage
+The package needs to be used with a dependency injection container. The package provides a `IServiceCollection` extension method to register the required services:
+
+```csharp
+using Collections.Isolated.Registration;
+
+public void ConfigureServices(IServiceCollection services)
+{
+	services.AddIsolatedDictionary();
+}
+```
+
+The package provides a `IDictionaryContext<>` interface that can be used to manage data transactions. Here's a basic example of how to use it:
+
+```csharp
+public class SessionManager(IDictionaryContext<SessionInfo> sessionDictionary, ISessionActivityLogger activityLogger)
+{
+    public async Task UpdateSessionActivity(string sessionId)
+    {
+        // optional, but greatly improves performance (the "false" is a readonly intent)
+        sessionDictionary.StateIntent([sessionId], false);
+
+        var sessionInfo = await sessionDictionary.TryGetAsync(sessionId) ?? new SessionInfo
+        {
+            SessionId = sessionId,
+            LastActivity = DateTime.UtcNow,
+            IsActive = true
+        };
+
+        sessionInfo.LastActivity = DateTime.UtcNow;
+        sessionInfo.IsActive = true;
+
+        await sessionDictionary.AddOrUpdateAsync(sessionId, sessionInfo);
+
+        // External I/O operation that must be performed atomically with the session update
+        await activityLogger.LogActivityAsync(sessionInfo);
+
+        // Commit changes atomically, ensuring both in-memory and external operations are successful
+        await sessionDictionary.SaveChangesAsync();
+    }
+}
+```

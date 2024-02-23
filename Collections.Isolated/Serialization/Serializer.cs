@@ -1,5 +1,4 @@
 ﻿using Force.DeepCloner;
-using MessagePack;
 
 namespace Collections.Isolated.Serialization;
 
