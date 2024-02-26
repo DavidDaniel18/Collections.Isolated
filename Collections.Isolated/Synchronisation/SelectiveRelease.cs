@@ -1,67 +1,203 @@
-﻿using System.Collections.Concurrent;
+﻿using Collections.Isolated.Entities;
+using Collections.Isolated.Enums;
 using Collections.Isolated.Registration;
 
 namespace Collections.Isolated.Synchronisation;
 
-public class SelectiveRelease
+internal class SelectiveRelease
 {
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> _waiters = new();
-    private readonly ConcurrentQueue<string> _transactionLockIds = new();
-    private volatile string _freeTransactionId = string.Empty;
-    private int _firstOperation = 0;
+    // Key: transactionId
+    private readonly List<IntentionLock> _waitingTransactions = new();
 
-    public async Task<bool> NextAcquireAsync(string transationId)
+    private readonly HashSet<string> _onGoingTransactions = new();
+    // Key: Key, Value: Intent
+    private readonly Dictionary<string, Intent> _intentLocks = new();
+
+    private readonly ReaderWriterLockSlim _ongoingLock = new(LockRecursionPolicy.SupportsRecursion);
+
+    private Intent _fullLockIntent = Intent.None;
+
+    internal async Task<bool> NextAcquireAsync(IntentionLock intentionLock)
     {
-        // Atomically set _freeId to id if it's currently empty
-        var originalFreeId = Interlocked.CompareExchange(ref _freeTransactionId, transationId, string.Empty);
-
-        // If this operation acquired the lock or if it's the first operation
-        if (originalFreeId == string.Empty || _freeTransactionId.Equals(transationId))
+        try
         {
-            var wasFirst = Interlocked.Exchange(ref _firstOperation, 1) == 0;
+            _ongoingLock.EnterUpgradeableReadLock();
 
-            return wasFirst;
+            if (_onGoingTransactions.Contains(intentionLock.TransactionId))
+            {
+                return false;
+            }
+
+            try
+            {
+                _ongoingLock.EnterWriteLock();
+
+                _waitingTransactions.Add(intentionLock);
+
+                TryAcquireLock(intentionLock);
+            }
+            finally
+            {
+                _ongoingLock.ExitWriteLock();
+            }
+        }
+        finally
+        {
+            _ongoingLock.ExitUpgradeableReadLock();
         }
 
-        _transactionLockIds.Enqueue(transationId);
+        var resultTask = await Task.WhenAny(intentionLock.TaskCompletionSource.Task, Task.Delay(ServiceRegistration.TransactionTimeoutInMs));
 
-        var tcs = new TaskCompletionSource<bool>();
-
-        _waiters[transationId] = tcs;
-
-        var resultTask = await Task.WhenAny(tcs.Task, Task.Delay(ServiceRegistration.TransactionTimeoutInMs));
-
-        if (resultTask == tcs.Task)
+        if (resultTask == intentionLock.TaskCompletionSource.Task)
         {
             return true;
         }
 
-        _waiters.TryRemove(transationId, out _);
-
         throw new TimeoutException("The transaction lock acquisition timed out.");
     }
 
-    public void Release()
+    internal void Release(IntentionLock intentionLock)
     {
-        if (_transactionLockIds.TryDequeue(out var nextFreeTransactionId))
+        try
         {
-            Interlocked.Exchange(ref _freeTransactionId, nextFreeTransactionId);
+            _ongoingLock.EnterWriteLock();
 
-            if (_waiters.TryRemove(nextFreeTransactionId, out var tcs))
+            _onGoingTransactions.Remove(intentionLock.TransactionId);
+
+            IfFullLockIntentIsWriteDemoteToNone();
+
+            foreach (var key in intentionLock.KeysToLock)
             {
-                tcs.SetResult(true);
+                _intentLocks.Remove(key);
+
             }
+
+            TryAcquireLocks();
+        }
+        finally
+        {
+            _ongoingLock.ExitWriteLock();
+        }
+    }
+
+    private void TryAcquireLocks()
+    {
+        for (int i = 0; i < _waitingTransactions.Count; i++)
+        {
+            TryAcquireLock(_waitingTransactions[i]);
+        }
+    }
+
+    private void IfFullLockIntentIsWriteDemoteToNone()
+    {
+        if (_fullLockIntent is Intent.Write)
+            _fullLockIntent = Intent.None;
+    }
+
+    private void TryAcquireLock(IntentionLock currentIntent)
+    {
+        if (currentIntent.TaskCompletionSource.Task.IsCompleted) return;
+
+        if (currentIntent.KeysToLock.Count == 0)
+        {
+            if (_fullLockIntent is Intent.Write) return;
+
+            if (currentIntent.Intent == Intent.Read)
+            {
+                _fullLockIntent = Intent.Read;
+
+                PromoteTaskToLock(currentIntent);
+            }
+            else if (NoCurrentLocks())
+            {
+                _fullLockIntent = Intent.Write;
+
+                PromoteTaskToLock(currentIntent);
+            }
+
+            return;
+        }
+
+        HashSet<string> lockedKeys = new();
+
+        int availableLocks = 0;
+
+        foreach (var key in currentIntent.KeysToLock)
+        {
+            // If the key is already locked, skip it
+            if (lockedKeys.Contains(key)) continue;
+
+            // If the key is locked, check if it's locked for writing
+            if (_intentLocks.TryGetValue(key, out var intent))
+            {
+                // nothing can be done if the key is locked for writing, add to the locked keys
+                if (intent == Intent.Write)
+                {
+                    lockedKeys.Add(key);
+                }
+                // if the key is locked for reading, it can be read again
+                else
+                {
+                    if (currentIntent.Intent == Intent.Read)
+                    {
+                        lockedKeys.Add(key);
+                        availableLocks++;
+                    }
+                    // if the key is locked for reading but the current intent is to write, block further reading
+                    else if (currentIntent.Intent == Intent.Write)
+                    {
+                        lockedKeys.Add(key);
+                    }
+                }
+            }
+            // not contained in locked keys
             else
             {
-                // This should never happen
-                throw new InvalidOperationException("The transaction lock id was not found in the waiters collection.");
+                lockedKeys.Add(key);
+                availableLocks++;
             }
+        }
+
+        // If all locks are available
+        if (availableLocks == currentIntent.KeysToLock.Count)
+        {
+            // Set the locks and release the task
+            foreach (var key in currentIntent.KeysToLock)
+            {
+                _intentLocks[key] = currentIntent.Intent;
+
+            }
+
+            PromoteTaskToLock(currentIntent);
+        }
+    }
+
+    private bool NoCurrentLocks()
+    {
+        return _intentLocks.Count == 0;
+    }
+
+    private void PromoteTaskToLock(IntentionLock currentIntent)
+    {
+        _waitingTransactions.Remove(currentIntent);
+        _onGoingTransactions.Add(currentIntent.TransactionId);
+
+        currentIntent.TaskCompletionSource.SetResult(true);
+    }
+
+    public void Forfeit(IntentionLock intentionLock)
+    {
+        _ongoingLock.EnterWriteLock();
+
+        if (_onGoingTransactions.Contains(intentionLock.TransactionId))
+        {
+            Release(intentionLock);
         }
         else
         {
-            // Reset for the next operation, ensure atomicity and visibility
-            Interlocked.Exchange(ref _firstOperation, 0);
-            Interlocked.Exchange(ref _freeTransactionId, string.Empty);
+            _waitingTransactions.Remove(intentionLock);
         }
+
+        _ongoingLock.ExitWriteLock();
     }
 }

@@ -22,17 +22,4 @@ internal sealed record AddOrUpdate<TValue> : WriteOperation<TValue> where TValue
             dictionary[Key] = Serializer.DeepClone(LazyValue);
         }
     }
-
-    internal override WriteOperation<TValue> LazyDeepCloneValue()
-    {
-        return this;
-        //if (Serializer.IsPrimitiveOrSpecialType<TValue>())
-        //{
-        //    return new AddOrUpdate<TValue>(Key, LazyValue.Value, CreationTime);
-        //}
-
-        //var lazyValue = new Lazy<TValue>(() => Serializer.DeserializeFromBytes<TValue>(Serializer.SerializeToBytes(LazyValue.Value)));
-
-        //return new AddOrUpdate<TValue>(Key, lazyValue, CreationTime);
-    }
 }

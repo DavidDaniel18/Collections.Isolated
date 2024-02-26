@@ -1,12 +1,10 @@
-﻿using System.Collections.Immutable;
-using System.Collections.ObjectModel;
-using Collections.Isolated.Entities;
+﻿using Collections.Isolated.Entities;
 using Collections.Isolated.Interfaces;
 using Collections.Isolated.ValueObjects.Commands;
 
 namespace Collections.Isolated.Synchronisation;
 
-public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue> where TValue : class
+internal sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue> where TValue : class
 {
     private readonly IsolatedDictionary<TValue> _dictionary = new();
 
@@ -16,78 +14,75 @@ public sealed class IsolationSync<TValue> : IIsolatedDictionary<TValue> where TV
 
     private long _lastLogTime = -1;
 
-    public async Task<TValue?> GetAsync(string key, string transactionId)
+    public async Task<TValue?> GetAsync(string key, IntentionLock intentionLock)
     {
-        _dictionary.EnsureTransactionCreated(transactionId);
+        _dictionary.EnsureTransactionCreated(intentionLock);
 
-        await AttemptLockAcquisition(transactionId);
+        await AttemptLockAcquisition(intentionLock);
 
-        return _dictionary.Get(key, transactionId);
+        return _dictionary.Get(key, intentionLock.TransactionId);
     }
 
-    public void AddOrUpdate(string key, TValue value, string transactionId)
+    public async Task AddOrUpdateAsync(string key, TValue value, IntentionLock intentionLock)
     {
-        _dictionary.EnsureTransactionCreated(transactionId);
+        _dictionary.EnsureTransactionCreated(intentionLock);
 
-        _dictionary.AddOrUpdate(key, value, transactionId);
+        await AttemptLockAcquisition(intentionLock);
+
+        _dictionary.AddOrUpdate(key, value, intentionLock.TransactionId);
     }
 
-    public void Remove(string key, string transactionId)
+    public async Task RemoveAsync(string key, IntentionLock intentionLock)
     {
-        _dictionary.EnsureTransactionCreated(transactionId);
+        _dictionary.EnsureTransactionCreated(intentionLock);
 
-        _dictionary.Remove(key, transactionId);
+        await AttemptLockAcquisition(intentionLock);
+
+        _dictionary.Remove(key, intentionLock.TransactionId);
     }
 
-    public void BatchApplyOperation(IEnumerable<(string key, TValue value)> items, string transactionId)
+    public async Task<int> CountAsync(IntentionLock intentionLock)
     {
-        _dictionary.EnsureTransactionCreated(transactionId);
+        _dictionary.EnsureTransactionCreated(intentionLock);
 
-        _dictionary.BatchAddOrUpdate(items, transactionId);
-    }
-
-    public async Task<int> CountAsync(string transactionId)
-    {
-        _dictionary.EnsureTransactionCreated(transactionId);
-
-        await AttemptLockAcquisition(transactionId);
+        await AttemptLockAcquisition(intentionLock);
 
         return _dictionary.Count();
     }
 
-    public async Task SaveChangesAsync(string transactionId)
+    public async Task SaveChangesAsync(IntentionLock intentionLock)
     {
-        if (_dictionary.ContainsTransaction(transactionId) is false) return;
+        if (_dictionary.ContainsTransaction(intentionLock.TransactionId) is false) return;
 
-        await AttemptLockAcquisition(transactionId);
+        await AttemptLockAcquisition(intentionLock);
 
-        var operations = _dictionary.SaveChangesAsync(transactionId);
+        Interlocked.Exchange(ref _log, _dictionary.SaveChanges(intentionLock.TransactionId));
 
         Interlocked.Exchange(ref _lastLogTime, Clock.GetTicks());
 
-        _log = operations;
-
-        _selectiveRelease.Release();
+        _selectiveRelease.Release(intentionLock);
     }
 
-    public void UndoChanges(string transactionId)
+    public void UndoChanges(IntentionLock intentionLock)
     {
-        _dictionary.UndoChanges(transactionId);
+        _selectiveRelease.Forfeit(intentionLock);
+
+        _dictionary.UndoChanges(intentionLock.TransactionId);
     }
 
-    private async Task AttemptLockAcquisition(string transactionId)
+    private async Task AttemptLockAcquisition(IntentionLock intentionLock)
     {
-        if (await _selectiveRelease.NextAcquireAsync(transactionId))
+        if (await _selectiveRelease.NextAcquireAsync(intentionLock))
         {
-            LockAcquired(transactionId);
+            LockAcquired(intentionLock.TransactionId);
         }
     }
 
     private void LockAcquired(string transactionId)
     {
-        var logSnapshot = _log.Values.ToList();
-
         var lastLogTime = Interlocked.Read(ref _lastLogTime);
+
+        var logSnapshot = _log.Values.ToList();
 
         _dictionary.UpdateTransactionWithLog(transactionId, logSnapshot, lastLogTime);
     }
