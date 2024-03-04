@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
 	<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 	  <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
-	  <Version>1.0.0</Version>
+	  <Version>1.0.2</Version>
 	  <PackageOutputPath>..\Nuget\</PackageOutputPath>
 	  <GenerateDocumentationFile>true</GenerateDocumentationFile>
 	  <DocumentationFile>$(MSBuildProjectName).xml</DocumentationFile>
@@ -23,11 +23,18 @@
 	</ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="DeepCloner" Version="0.10.4"/>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
     <None Include="Readme.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Collections.Isolated.Abstractions\Collections.Isolated.Abstractions.csproj" />
+    <ProjectReference Include="..\Collections.Isolated.Application\Collections.Isolated.Application.csproj" />
+    <ProjectReference Include="..\Collections.Isolated.Controllers\Collections.Isolated.Controllers.csproj" />
+    <ProjectReference Include="..\Collections.Isolated.Domain.Dictionary\Collections.Isolated.Domain.Dictionary.csproj" />
+    <ProjectReference Include="..\Collections.Isolated.Infrastructure\Collections.Isolated.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

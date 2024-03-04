@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+option csharp_namespace = "Raft";
+
+package Consensus;
+
+service Election {
+  rpc Propose (Proposal) returns (ProposalReply);
+}
+
+message Proposal {
+  int32 term = 1;
+  string NodeId = 2;
+}
+
+message ProposalReply {
+   int32 term = 1;
+  string NodeId = 2;
+  string IssuerId = 3;
+}

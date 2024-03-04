@@ -1,11 +1,13 @@
-﻿using Collections.Isolated.Entities;
-using Collections.Isolated.Enums;
-using Collections.Isolated.Interfaces;
+﻿using System.Collections;
+using Collections.Isolated.Abstractions;
+using Collections.Isolated.Application.Interfaces;
+using Collections.Isolated.Domain.Dictionary.Enums;
+using Collections.Isolated.Domain.Dictionary.ValueObjects;
 
 namespace Collections.Isolated.Context;
 
 /// <inheritdoc cref="IDictionaryContext{TValue}"/>
-public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictionary) : IDictionaryContext<TValue>, IDisposable
+public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictionary) : IDictionaryContext<TValue>
     where TValue : class
 {
     private IntentionLock _intentionLock = new (
@@ -90,6 +92,12 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
         _intentStated = false;
     }
 
+    /// <inheritdoc />
+    public IEnumerable<TValue> GetTrackedEntities()
+    {
+        return dictionary.GetTrackedEntities(_intentionLock);
+    }
+
     /// <inheritdoc cref="IDictionaryContext{TValue}.RollBack"/>
     public void RollBack()
     {
@@ -130,4 +138,19 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
             throw new InvalidOperationException("Cannot write to dictionary with read intention.");
     }
 
+    /// <summary>
+    /// Returns an enumerator that iterates through the collection.
+    /// </summary>
+    /// <returns></returns>
+    public IEnumerator<TValue> GetEnumerator()
+    {
+        var allValues = dictionary.GetAllAsync(_intentionLock).Result;
+
+        return allValues.GetEnumerator();
+    }
+
+    IEnumerator IEnumerable.GetEnumerator()
+    {
+        return GetEnumerator();
+    }
 }

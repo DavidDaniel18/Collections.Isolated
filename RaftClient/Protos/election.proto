@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+option csharp_namespace = "Raft";
+
+package Consensus;
+
+service Election {
+  rpc Propose (Proposal) returns (ProposalReply);
+}
+
+// The request message containing the user's name.
+message Proposal {
+  string name = 1;
+  int32 term = 2;
+  int32 operation = 3;
+}
+
+// The response message containing the greetings.
+message ProposalReply {
+   int32 term = 1;
+   bool success = 2;
+}

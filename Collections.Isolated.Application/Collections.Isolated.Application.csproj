@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+	<ItemGroup>
+		<Protobuf Include="Contracts\election.proto" GrpcServices="Both" />
+		<Protobuf Include="Contracts\stateLogger.proto" GrpcServices="Both" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Grpc.AspNetCore" Version="2.61.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\Collections.Isolated.Abstractions\Collections.Isolated.Abstractions.csproj" />
+	  <ProjectReference Include="..\Collections.Isolated.Domain.Consensus\Collections.Isolated.Domain.Consensus.csproj" />
+	  <ProjectReference Include="..\Collections.Isolated.Domain.Dictionary\Collections.Isolated.Domain.Dictionary.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Folder Include="Commands\Election\" />
+	  <Folder Include="Commands\Updates\" />
+	</ItemGroup>
+
+</Project>

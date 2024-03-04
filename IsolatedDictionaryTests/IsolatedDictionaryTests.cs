@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using Collections.Isolated;
+using Collections.Isolated.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Xunit.Abstractions;

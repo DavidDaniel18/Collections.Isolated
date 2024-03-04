@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+option csharp_namespace = "Raft";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/Any.proto";
+
+package Consensus;
+
+service StateLogger {
+  rpc Log (LogRequests) returns (google.protobuf.Empty);
+}
+
+message LogRequest {
+    string key = 1;
+    string operation = 3;
+    google.protobuf.Any object = 4;
+}
+
+message LogRequests {
+  repeated LogRequest logRequest = 1;
+  int32 term = 2;
+  string senderId = 3;
+}

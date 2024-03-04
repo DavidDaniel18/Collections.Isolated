@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+option csharp_namespace = "Raft";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/Any.proto";
+
+package Consensus;
+
+service StateLogger {
+  rpc Log (LogRequest) returns (google.protobuf.Empty);
+}
+
+// The response message containing the greetings.
+message LogRequest {
+    string key = 1;
+    string term = 2;
+    string operation = 3;
+    google.protobuf.Any object = 4;
+}
