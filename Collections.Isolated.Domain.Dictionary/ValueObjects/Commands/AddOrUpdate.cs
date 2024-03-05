@@ -13,13 +13,15 @@ internal sealed record AddOrUpdate<TValue> : WriteOperation<TValue> where TValue
 
     internal override void Apply(IDictionary<string, TValue> dictionary)
     {
-        if (Serializer.IsPrimitiveOrSpecialType<TValue>())
-        {
-            dictionary[Key] = LazyValue;
-        }
-        else
-        {
-            dictionary[Key] = Serializer.DeepClone(LazyValue);
-        }
+        dictionary[Key] = LazyValue;
+
+        //if (Serializer.IsPrimitiveOrSpecialType<TValue>())
+        //{
+        //    dictionary[Key] = LazyValue;
+        //}
+        //else
+        //{
+        //    dictionary[Key] = Serializer.DeepClone(LazyValue);
+        //}
     }
 }

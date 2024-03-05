@@ -13,7 +13,7 @@ public interface IIsolatedDictionary<TValue> where TValue : class
     Task RemoveAsync(string key, IntentionLock intentionLock);
     Task SaveChangesAsync(IntentionLock intentionLock);
     Task<int> CountAsync(IntentionLock intentionLock);
-    void UndoChanges(IntentionLock intentionLock);
+    Task UndoChangesAsync(IntentionLock intentionLock);
     IEnumerable<TValue> GetTrackedEntities(IntentionLock intentionLock);
     Task<IEnumerable<TValue>> GetAllAsync(IntentionLock intentionLock);
 #pragma warning restore CS1591 // Missing XML comment for publicly visible type or member

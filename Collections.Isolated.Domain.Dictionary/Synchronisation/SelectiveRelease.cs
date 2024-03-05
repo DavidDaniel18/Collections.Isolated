@@ -4,7 +4,7 @@ using Collections.Isolated.Domain.Dictionary.ValueObjects;
 
 namespace Collections.Isolated.Domain.Dictionary.Synchronisation;
 
-internal class SelectiveRelease(ITransactionSettings transactionSettings)
+internal class SelectiveRelease(ITransactionSettings transactionSettings) : ISelectiveRelease
 {
     // Key: transactionId
     private readonly List<IntentionLock> _waitingTransactions = new();
@@ -17,7 +17,7 @@ internal class SelectiveRelease(ITransactionSettings transactionSettings)
 
     private Intent _fullLockIntent = Intent.None;
 
-    internal async Task<bool> NextAcquireAsync(IntentionLock intentionLock)
+    public async Task<bool> NextAcquireAsync(IntentionLock intentionLock)
     {
         try
         {
@@ -56,27 +56,36 @@ internal class SelectiveRelease(ITransactionSettings transactionSettings)
         throw new TimeoutException("The transaction lock acquisition timed out.");
     }
 
-    internal void Release(IntentionLock intentionLock)
+    public Task ReleaseAsync(IntentionLock intentionLock)
     {
         try
         {
             _ongoingLock.EnterWriteLock();
 
-            _onGoingTransactions.Remove(intentionLock.TransactionId);
-
-            IfFullLockIntentIsWriteDemoteToNone();
-
-            foreach (var key in intentionLock.KeysToLock)
+            if (_onGoingTransactions.Contains(intentionLock.TransactionId))
             {
-                _intentLocks.Remove(key);
-            }
+                _onGoingTransactions.Remove(intentionLock.TransactionId);
 
-            TryAcquireLocks();
+                IfFullLockIntentIsWriteDemoteToNone();
+
+                foreach (var key in intentionLock.KeysToLock)
+                {
+                    _intentLocks.Remove(key);
+                }
+
+                TryAcquireLocks();
+            }
+            else
+            {
+                _waitingTransactions.Remove(intentionLock);
+            }
         }
         finally
         {
             _ongoingLock.ExitWriteLock();
         }
+
+        return Task.CompletedTask;
     }
 
     private void TryAcquireLocks()
@@ -182,27 +191,5 @@ internal class SelectiveRelease(ITransactionSettings transactionSettings)
         _onGoingTransactions.Add(currentIntent.TransactionId);
 
         currentIntent.TaskCompletionSource.SetResult(true);
-    }
-
-    public void Forfeit(IntentionLock intentionLock)
-    {
-        try
-        {
-            _ongoingLock.EnterWriteLock();
-
-            if (_onGoingTransactions.Contains(intentionLock.TransactionId))
-            {
-                Release(intentionLock);
-            }
-            else
-            {
-                _waitingTransactions.Remove(intentionLock);
-            }
-        }
-        finally
-        {
-            _ongoingLock.ExitWriteLock();
-
-        }
     }
 }

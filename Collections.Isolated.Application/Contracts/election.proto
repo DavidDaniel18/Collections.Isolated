@@ -14,7 +14,7 @@ message Proposal {
 }
 
 message ProposalReply {
-   int32 term = 1;
+  int32 term = 1;
   string NodeId = 2;
   string IssuerId = 3;
 }

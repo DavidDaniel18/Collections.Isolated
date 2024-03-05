@@ -23,7 +23,7 @@ public static class ServiceRegistration
     /// <returns></returns>
     public static IServiceCollection AddIsolatedDictionary(this IServiceCollection collection, int transactionTimeoutInMs = -1)
     {
-        collection.AddSingleton(typeof(IIsolatedDictionary<>), typeof(IsolationSync<>));
+        collection.AddSingleton(typeof(IIsolatedDictionary<>), typeof(DictionaryTransactionAdaptor<>));
         collection.AddScoped(typeof(IDictionaryContext<>), typeof(DictionaryContext<>));
 
         if (transactionTimeoutInMs > 0)

@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+option csharp_namespace = "Consistency";
+
+package Consensus;
+
+service DistributedLock {
+  rpc NextAcquireAsync (RpcIntentionLock) returns (Result);
+
+  rpc ReleaseAsync (RpcIntentionLock) returns (Result);
+}
+
+message RpcIntentionLock {
+  string LockName = 1;
+  int32 Intent = 2;
+  string TypeName = 3;
+  repeated string KeysToLock = 4;
+}
+
+message Result {
+  bool Success = 1;
+}

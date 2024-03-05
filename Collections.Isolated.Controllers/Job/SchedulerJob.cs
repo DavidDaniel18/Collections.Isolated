@@ -9,16 +9,18 @@ internal sealed class SchedulerJob(IServiceProvider serviceProvider) : Backgroun
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var scope = serviceProvider.CreateScope();
+        //var scope = serviceProvider.CreateScope();
 
-        var nodeDictionaryContext = scope.ServiceProvider.GetRequiredService<IDictionaryContext<Node>>();
+        //var nodeDictionaryContext = scope.ServiceProvider.GetRequiredService<IDictionaryContext<Node>>();
 
 
 
-        nodeDictionaryContext.StateIntent();
+        //nodeDictionaryContext.StateIntent();
 
-        nodeDictionaryContext.TryGetAsync()
+        //nodeDictionaryContext.TryGetAsync()
 
-        handler.Register(consumer);
+        //handler.Register(consumer);
+
+        return Task.CompletedTask;
     }
 }

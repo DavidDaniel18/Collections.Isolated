@@ -26,6 +26,15 @@ public sealed class HostInfo : IHostInfo
     public int GetElectionProposal() => ElectionProposal;
 
     public ImmutableList<string> GetPairKeys() => PairKeys;
+    public IEnumerable<string> GetPairAddresses()
+    {
+        throw new NotImplementedException();
+    }
+
+    public int GetClusterSize()
+    {
+        throw new NotImplementedException();
+    }
 
     public int GetTransactionTimeoutInMs() => TransactionTimeoutInMs;
 }

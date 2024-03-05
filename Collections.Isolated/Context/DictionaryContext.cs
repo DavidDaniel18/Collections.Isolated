@@ -110,7 +110,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
     /// <remarks>Do not use this if you're name isn't CLR</remarks>
     public void Dispose()
     {
-        dictionary.UndoChanges(_intentionLock);
+        dictionary.UndoChangesAsync(_intentionLock).Wait();
 
         _disposed = true;
 

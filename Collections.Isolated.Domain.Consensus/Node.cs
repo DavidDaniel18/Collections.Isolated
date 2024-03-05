@@ -6,7 +6,7 @@ using Collections.Isolated.Domain.Consensus.ValueObjects;
 
 namespace Collections.Isolated.Domain.Consensus;
 
-internal sealed class Node : Aggregate<Node>
+public sealed class Node : Aggregate<Node>
 {
     private Proposal Proposal { get; set; }
 

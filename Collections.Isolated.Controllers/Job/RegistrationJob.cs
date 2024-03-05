@@ -12,14 +12,10 @@ internal sealed class RegistrationJob(IServiceProvider provider) : BackgroundSer
     {
         var scope = provider.CreateScope();
 
-        var logClient = scope.ServiceProvider.GetRequiredService<ILogClient>();
+        var handler = scope.ServiceProvider.GetRequiredService<NodeEventHandler>();
 
-        var consumer = scope.ServiceProvider.GetRequiredService<IConsumer>();
+        handler.Register();
 
-        var sendLog = new SendLog(logClient);
-
-        NodeEventHandler handler = new(sendLog);
-
-        handler.Register(consumer);
+        return Task.CompletedTask;
     }
 }

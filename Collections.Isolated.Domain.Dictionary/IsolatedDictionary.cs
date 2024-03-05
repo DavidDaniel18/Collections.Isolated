@@ -61,7 +61,7 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
         }
     }
 
-    internal void EnsureTransactionCreated(IntentionLock transactionLock)
+    public void EnsureTransactionCreated(IntentionLock transactionLock)
     {
         if(ContainsTransaction(transactionLock.TransactionId) is false)
         {

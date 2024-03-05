@@ -7,13 +7,11 @@ using Collections.Isolated.Domain.Dictionary.ValueObjects.Commands;
 
 namespace Collections.Isolated.Application.Synchronisation;
 
-internal sealed class IsolationSync<TValue>(IHostInfo hostInfo) : IIsolatedDictionary<TValue> where TValue : class
+internal sealed class DictionaryTransactionAdaptor<TValue>(ISelectiveRelease selectiveRelease) : IIsolatedDictionary<TValue> where TValue : class
 {
     private readonly IsolatedDictionary<TValue> _dictionary = new();
 
     private volatile IReadOnlyDictionary<string, WriteOperation<TValue>> _log = new Dictionary<string, WriteOperation<TValue>>();
-
-    private readonly SelectiveRelease _selectiveRelease = new(hostInfo);
 
     private long _lastLogTime = -1;
 
@@ -63,12 +61,12 @@ internal sealed class IsolationSync<TValue>(IHostInfo hostInfo) : IIsolatedDicti
 
         Interlocked.Exchange(ref _lastLogTime, Clock.GetTicks());
 
-        _selectiveRelease.Release(intentionLock);
+        await selectiveRelease.ReleaseAsync(intentionLock);
     }
 
-    public void UndoChanges(IntentionLock intentionLock)
+    public async Task UndoChangesAsync(IntentionLock intentionLock)
     {
-        _selectiveRelease.Forfeit(intentionLock);
+        await selectiveRelease.ReleaseAsync(intentionLock);
 
         _dictionary.UndoChanges(intentionLock.TransactionId);
     }
@@ -91,7 +89,7 @@ internal sealed class IsolationSync<TValue>(IHostInfo hostInfo) : IIsolatedDicti
 
     private async Task AttemptLockAcquisition(IntentionLock intentionLock)
     {
-        if (await _selectiveRelease.NextAcquireAsync(intentionLock))
+        if (await selectiveRelease.NextAcquireAsync(intentionLock))
         {
             LockAcquired(intentionLock.TransactionId);
         }

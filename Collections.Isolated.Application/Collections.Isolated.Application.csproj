@@ -6,8 +6,13 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Remove="Contracts\distributedLock.proto" />
+  </ItemGroup>
+
 	<ItemGroup>
 		<Protobuf Include="Contracts\election.proto" GrpcServices="Both" />
+		<Protobuf Include="Contracts\distributedLock.proto" GrpcServices="Both" />
 		<Protobuf Include="Contracts\stateLogger.proto" GrpcServices="Both" />
 	</ItemGroup>
 
@@ -23,6 +28,7 @@
 
 	<ItemGroup>
 	  <Folder Include="Commands\Election\" />
+	  <Folder Include="Commands\Lock\" />
 	  <Folder Include="Commands\Updates\" />
 	</ItemGroup>
 
