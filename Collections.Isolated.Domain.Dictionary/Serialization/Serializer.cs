@@ -1,19 +1,25 @@
-﻿
-using FastDeepCloner;
+﻿using MessagePack.Resolvers;
+using MessagePack;
 
 namespace Collections.Isolated.Domain.Dictionary.Serialization;
 
 internal static class Serializer
 {
-    internal static T DeepClone<T>(T obj)
+    static Serializer()
     {
-        return (T)obj.Clone(FieldType.Both);
+        // Setup options with contractless resolver for flexibility
+        // You can customize this to use other resolvers or options as needed
+        var options = MessagePackSerializerOptions.Standard.WithResolver(ContractlessStandardResolver.Instance);
+        MessagePackSerializer.DefaultOptions = options;
     }
 
-    internal static bool IsPrimitiveOrSpecialType<T>()
+    internal static byte[] Serialize<T>(T obj)
     {
-        Type type = typeof(T);
-        return type.IsPrimitive || type == typeof(string) || type == typeof(decimal);
+        return MessagePack.MessagePackSerializer.Serialize(obj);
     }
 
+    internal static T Deserialize<T>(byte[] bytes)
+    {
+        return MessagePack.MessagePackSerializer.Deserialize<T>(bytes);
+    }
 }

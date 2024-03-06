@@ -1,17 +1,19 @@
 ﻿using System.Collections.Concurrent;
 using Collections.Isolated.Domain.Dictionary.Entities;
+using Collections.Isolated.Domain.Dictionary.Interfaces;
+using Collections.Isolated.Domain.Dictionary.Serialization;
 using Collections.Isolated.Domain.Dictionary.ValueObjects;
 using Collections.Isolated.Domain.Dictionary.ValueObjects.Commands;
 
 namespace Collections.Isolated.Domain.Dictionary;
 
-internal sealed class IsolatedDictionary<TValue> where TValue : class
+internal sealed class SyncStore<TValue>(ILog<TValue> log) : ISyncStore<TValue>
 {
-    private readonly ConcurrentDictionary<string, TValue> _dictionary = new();
+    private readonly ConcurrentDictionary<string, byte[]> _dictionary = new();
 
-    private readonly ConcurrentDictionary<string, Transaction<TValue>> _transactions = new();
+    private readonly ConcurrentDictionary<string, Transaction> _transactions = new();
 
-    internal IReadOnlyDictionary<string, WriteOperation<TValue>> SaveChanges(string transactionId)
+    public void SaveChanges(string transactionId)
     {
         var transaction = _transactions[transactionId];
 
@@ -24,10 +26,10 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
             operation.Apply(_dictionary);
         }
 
-        return operations;
+        log.UpdateLog(operations);
     }
 
-    internal int Count()
+    public int Count()
     {
         return _dictionary.Count;
     }
@@ -36,14 +38,23 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
     {
         var transaction = _transactions[transactionId];
 
-        return transaction.Get(key);
+        var bytes =transaction.Get(key);
+
+        if (bytes == null)
+        {
+            _dictionary.TryGetValue(key, out bytes);
+        }
+
+        return bytes is null ? default : Serializer.Deserialize<TValue>(bytes);
     }
 
     public void AddOrUpdate(string key, TValue value, string transactionId)
     {
         var transaction = _transactions[transactionId];
 
-        transaction.AddOrUpdateOperation(key, value);
+        var bytes = Serializer.Serialize(value);
+
+        transaction.AddOrUpdateOperation(key, bytes);
     }
 
     public void Remove(string key, string transactionId)
@@ -53,7 +64,7 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
         transaction.AddRemoveOperation(key);
     }
 
-    internal void UndoChanges(string transactionId)
+    public void UndoChanges(string transactionId)
     {
         if (_transactions.TryRemove(transactionId, out var transaction))
         {
@@ -69,12 +80,12 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
         }
     }
 
-    internal bool ContainsTransaction(string transactionId)
+    public bool ContainsTransaction(string transactionId)
     {
         return _transactions.ContainsKey(transactionId);
     }
 
-    internal void UpdateTransactionWithLog(string transactionId, IEnumerable<WriteOperation<TValue>> log, long lastLogTime)
+    public void UpdateTransactionWithLog(string transactionId, IEnumerable<WriteOperation> log, long lastLogTime)
     {
         var transaction = _transactions[transactionId];
 
@@ -83,7 +94,7 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
 
     private void CreateTransaction(IntentionLock transactionLock)
     {
-        var snapshot = new Dictionary<string, TValue>();
+        var snapshot = new Dictionary<string, byte[]>();
 
         if (transactionLock.KeysToLock.Count == 0)
         {
@@ -100,18 +111,29 @@ internal sealed class IsolatedDictionary<TValue> where TValue : class
             }
         }
 
-        var transaction = new Transaction<TValue>(transactionLock.TransactionId, new Dictionary<string, TValue>(snapshot), Clock.GetTicks());
+        var transaction = new Transaction(transactionLock.TransactionId, Clock.GetTicks());
 
         _transactions.TryAdd(transactionLock.TransactionId, transaction);
     }
 
-    public IEnumerable<TValue> GetTrackedEntities(string intentionLockTransactionId)
+    public List<TValue> GetTrackedEntities(string intentionLockTransactionId)
     {
-        return _transactions[intentionLockTransactionId].GetTrackedEntities();
+        var bytes = _transactions[intentionLockTransactionId].GetTrackedEntities();
+
+        return bytes.Select(Serializer.Deserialize<TValue>).ToList();
     }
 
-    public IEnumerable<TValue> GetAll(string intentionLockTransactionId)
+    public List<TValue> GetAll(string intentionLockTransactionId)
     {
-        return _transactions[intentionLockTransactionId].GetAll();
+        var operations = _transactions[intentionLockTransactionId].GetOperations();
+
+        var newDictionary = new Dictionary<string, byte[]>(_dictionary);
+
+        foreach (var operation in operations.Values)
+        {
+            operation.Apply(newDictionary);
+        }
+
+        return newDictionary.Values.Select(Serializer.Deserialize<TValue>).ToList();
     }
 }

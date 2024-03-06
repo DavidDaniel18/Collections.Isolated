@@ -1,9 +1,10 @@
 ﻿using Collections.Isolated.Application.Interfaces;
 using Collections.Isolated.Domain.Dictionary.ValueObjects;
+using Collections.Isolated.Domain.Dictionary.ValueObjects.Commands;
 
-namespace Collections.Isolated.Application.Synchronisation;
+namespace Collections.Isolated.Application.Decorators.SyncStore;
 
-internal sealed class DistributedDecorator<TValue>(IHostInfo hostInfo, IIsolatedDictionary<TValue> decoratedDictionary, ILogClient logClient) : IIsolatedDictionary<TValue> where TValue : class
+internal sealed class ConsensusFollowerDecorator<TValue>(ISyncStoreAsync<TValue> syncStoreAsync) : ISyncStoreAsync<TValue>
 {
     public Task<TValue?> GetAsync(string key, IntentionLock intentionLock)
     {
@@ -40,7 +41,22 @@ internal sealed class DistributedDecorator<TValue>(IHostInfo hostInfo, IIsolated
         throw new NotImplementedException();
     }
 
-    public Task<IEnumerable<TValue>> GetAllAsync(IntentionLock intentionLock)
+    public Task<List<TValue>> GetAllAsync(IntentionLock intentionLock)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task EnsureTransactionCreatedAsync(IntentionLock transactionLock)
+    {
+        throw new NotImplementedException();
+    }
+
+    public bool ContainsTransaction(string intentionLockTransactionId)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task UpdateTransactionWithLogAsync(string intentionLockTransactionId, List<WriteOperation> logSnapshot, long lastLogTime)
     {
         throw new NotImplementedException();
     }

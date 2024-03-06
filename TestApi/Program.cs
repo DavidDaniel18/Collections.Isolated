@@ -1,6 +1,4 @@
 
-using Collections.Isolated.Registration;
-
 namespace TestApi
 {
     public class Program
@@ -15,8 +13,6 @@ namespace TestApi
             // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();
-
-            builder.Services.AddIsolatedDictionary();
 
             var app = builder.Build();
 

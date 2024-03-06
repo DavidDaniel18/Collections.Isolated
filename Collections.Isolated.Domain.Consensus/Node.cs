@@ -126,6 +126,11 @@ public sealed class Node : Aggregate<Node>
         }
     }
 
+    internal bool IsLeader()
+    {
+        return _consensusState is Leader;
+    }
+
     private int CompareTerms(Proposal node)
     {
         return Compare(Term, node.Term);

@@ -1,6 +1,4 @@
-﻿using Collections.Isolated.Application.Commands.Logs;
-using Collections.Isolated.Application.Interfaces;
-using Collections.Isolated.Controllers.EventHandlers;
+﻿using Collections.Isolated.Controllers.EventHandlers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 

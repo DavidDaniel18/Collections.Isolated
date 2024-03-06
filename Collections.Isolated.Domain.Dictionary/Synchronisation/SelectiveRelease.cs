@@ -4,7 +4,7 @@ using Collections.Isolated.Domain.Dictionary.ValueObjects;
 
 namespace Collections.Isolated.Domain.Dictionary.Synchronisation;
 
-internal class SelectiveRelease(ITransactionSettings transactionSettings) : ISelectiveRelease
+internal class SelectiveRelease<TValue>(ITransactionSettings transactionSettings)
 {
     // Key: transactionId
     private readonly List<IntentionLock> _waitingTransactions = new();
@@ -17,7 +17,7 @@ internal class SelectiveRelease(ITransactionSettings transactionSettings) : ISel
 
     private Intent _fullLockIntent = Intent.None;
 
-    public async Task<bool> NextAcquireAsync(IntentionLock intentionLock)
+    public async Task<bool> NextAcquire(IntentionLock intentionLock)
     {
         try
         {
@@ -56,7 +56,7 @@ internal class SelectiveRelease(ITransactionSettings transactionSettings) : ISel
         throw new TimeoutException("The transaction lock acquisition timed out.");
     }
 
-    public Task ReleaseAsync(IntentionLock intentionLock)
+    public void Release(IntentionLock intentionLock)
     {
         try
         {
@@ -84,8 +84,6 @@ internal class SelectiveRelease(ITransactionSettings transactionSettings) : ISel
         {
             _ongoingLock.ExitWriteLock();
         }
-
-        return Task.CompletedTask;
     }
 
     private void TryAcquireLocks()

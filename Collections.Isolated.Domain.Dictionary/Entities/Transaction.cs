@@ -2,34 +2,31 @@
 
 namespace Collections.Isolated.Domain.Dictionary.Entities;
 
-internal sealed class Transaction<TValue> where TValue : class
+internal sealed class Transaction
 {
     internal string Id { get; }
 
     //we compress the log to only show applied values
-    private Dictionary<string, WriteOperation<TValue>> Operations { get; } = new();
-
-    private readonly Dictionary<string, TValue> _snapshot;
+    private Dictionary<string, WriteOperation> Operations { get; } = new();
 
     private readonly long _creationTime;
 
-    internal Transaction(string id, Dictionary<string, TValue> snapshot, long creationTime)
+    internal Transaction(string id, long creationTime)
     {
         Id = id;
-        _snapshot = snapshot;
         _creationTime = creationTime;
     }
 
-    internal void AddOrUpdateOperation(string key, TValue value)
+    internal void AddOrUpdateOperation(string key, byte[] value)
     {
-        var writeOperation = new AddOrUpdate<TValue>(key, value, Clock.GetTicks());
+        var writeOperation = new AddOrUpdate(key, value, Clock.GetTicks());
 
         AddWriteOperationUnsafe(writeOperation);
     }
 
     public void AddRemoveOperation(string key)
     {
-        var removeOperation = new Remove<TValue>(key, Clock.GetTicks());
+        var removeOperation = new Remove(key, Clock.GetTicks());
 
         AddWriteOperationUnsafe(removeOperation);
     }
@@ -39,23 +36,23 @@ internal sealed class Transaction<TValue> where TValue : class
         Operations.Clear();
     }
 
-    internal TValue? Get(string key)
+    internal byte[]? Get(string key)
     {
-        if (Operations.TryGetValue(key, out var operation) && operation is AddOrUpdate<TValue> addOrUpdate)
+        if (Operations.TryGetValue(key, out var operation) && operation is AddOrUpdate addOrUpdate)
         {
-            return addOrUpdate.LazyValue;
+            return addOrUpdate.Bytes;
         }
 
-        return _snapshot.GetValueOrDefault(key);
+        return null;
     }
 
-    internal IReadOnlyDictionary<string, WriteOperation<TValue>> GetOperations()
+    internal IReadOnlyDictionary<string, WriteOperation> GetOperations()
     {
         return Operations;
     }
 
 
-    internal void Sync(IEnumerable<WriteOperation<TValue>> operationsToProcess, long commitTime)
+    internal void Sync(IEnumerable<WriteOperation> operationsToProcess, long commitTime)
     {
         var newOperations = operationsToProcess.Where(op =>
         {
@@ -79,30 +76,17 @@ internal sealed class Transaction<TValue> where TValue : class
         }
     }
 
-    private void AddWriteOperationUnsafe(WriteOperation<TValue> writeOperation)
+    private void AddWriteOperationUnsafe(WriteOperation writeOperation)
     {
         Operations[writeOperation.Key] = writeOperation;
     }
 
-    private void ApplyChangesUnsafe(Dictionary<string, TValue> store)
-    {
-        foreach (var operation in Operations.Values)
-        {
-            operation.Apply(store);
-        }
-    }
-
-    public IEnumerable<TValue> GetTrackedEntities()
+    public List<byte[]> GetTrackedEntities()
     {
         return Operations.Values
-            .Where(operation => operation is AddOrUpdate<TValue>)
-            .Cast<AddOrUpdate<TValue>>()
-            .Select(operation => operation.LazyValue)
+            .Where(operation => operation is AddOrUpdate)
+            .Cast<AddOrUpdate>()
+            .Select(operation => operation.Bytes)
             .ToList();
-    }
-
-    public IEnumerable<TValue> GetAll()
-    {
-        return _snapshot.Values.ToArray();
     }
 }

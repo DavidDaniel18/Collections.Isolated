@@ -5,13 +5,15 @@ option csharp_namespace = "Consistency";
 package Consensus;
 
 service DistributedLock {
-  rpc NextAcquireAsync (RpcIntentionLock) returns (Result);
+  rpc NextAcquire (RpcIntentionLock) returns (Result);
 
-  rpc ReleaseAsync (RpcIntentionLock) returns (Result);
+  rpc Release (RpcIntentionLock) returns (google.protobuf.Empty);
+
+  rpc EnsureTransactionCreated (RpcIntentionLock) returns (google.protobuf.Empty);
 }
 
 message RpcIntentionLock {
-  string LockName = 1;
+  string TransactionId = 1;
   int32 Intent = 2;
   string TypeName = 3;
   repeated string KeysToLock = 4;

@@ -2,9 +2,9 @@
 
 public interface ICollectionIsolatedConfigurator
 {
-    void AddStore<TKey, TValue>()
-        where TValue : class
-        where TKey : notnull;
+    void AddStore<TValue>();
 
     void AddPairs(Action<IPairConfigurator> configurator);
+
+    int TransactionTimeoutInMs { get; set; }
 }

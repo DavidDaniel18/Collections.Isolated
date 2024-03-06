@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TestApi;
 using Xunit.Abstractions;
+using static IsolatedDictionaryTests.SyncStoreTests;
 
 namespace IsolatedDictionaryTests;
 
@@ -24,7 +25,13 @@ public sealed class IntegrationWebApplicationFactory(IntegrationWebApplicationFa
             {
                 services.AddSingleton(outputHelper);
 
-                services.AddIsolatedDictionary();
+                services.AddIsolatedDictionary(configurator =>
+                {
+                    configurator.AddStore<string>();
+                    configurator.AddStore<HeapAllocation>();
+
+                    configurator.TransactionTimeoutInMs = 1000;
+                });
             })
             .ConfigureLogging(loggingBuilder =>
             {

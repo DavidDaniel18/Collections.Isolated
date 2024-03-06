@@ -2,19 +2,17 @@
 
 namespace Collections.Isolated.Options;
 
-internal sealed class SyncStoreOptions : ICollectionIsolatedConfigurator
+internal sealed class CollectionConfigurator : ICollectionIsolatedConfigurator
 {
-    internal List<(Type StoreKeyType, Type StoreValueType)> Types { get; set; } = new();
+    internal List<Type> Types { get; set; } = new();
 
     internal PairConfigurator PairConfigurator { get; private set; } = new();
 
     public int ExposedPort { get; set; }
 
-    public void AddStore<TKey, TValue>()
-    where TValue : class
-    where TKey : notnull
+    public void AddStore<TValue>()
     {
-        Types.Add((typeof(TKey), typeof(TValue)));
+        Types.Add(typeof(TValue));
     }
 
     public void AddPairs(Action<IPairConfigurator> configurator)
@@ -25,4 +23,6 @@ internal sealed class SyncStoreOptions : ICollectionIsolatedConfigurator
 
         PairConfigurator = pairConfigurator;
     }
+
+    public int TransactionTimeoutInMs { get; set; }
 }

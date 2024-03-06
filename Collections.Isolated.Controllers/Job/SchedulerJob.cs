@@ -1,7 +1,4 @@
-﻿using Collections.Isolated.Abstractions;
-using Collections.Isolated.Domain.Consensus;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
+﻿using Microsoft.Extensions.Hosting;
 
 namespace Collections.Isolated.Controllers.Job;
 

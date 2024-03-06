@@ -1,19 +1,17 @@
-﻿using Collections.Isolated.Domain.Dictionary.Serialization;
+﻿namespace Collections.Isolated.Domain.Dictionary.ValueObjects.Commands;
 
-namespace Collections.Isolated.Domain.Dictionary.ValueObjects.Commands;
-
-internal sealed record AddOrUpdate<TValue> : WriteOperation<TValue> where TValue : class
+internal sealed record AddOrUpdate : WriteOperation
 {
-    internal TValue LazyValue { get; }
+    internal byte[] Bytes { get; }
 
-    internal AddOrUpdate(string key, TValue value, long creationTime) : base(key, creationTime)
+    internal AddOrUpdate(string key, byte[] value, long creationTime) : base(key, creationTime)
     {
-        LazyValue = value;
+        Bytes = value;
     }
 
-    internal override void Apply(IDictionary<string, TValue> dictionary)
+    internal override void Apply(IDictionary<string, byte[]> dictionary)
     {
-        dictionary[Key] = LazyValue;
+        dictionary[Key] = Bytes;
 
         //if (Serializer.IsPrimitiveOrSpecialType<TValue>())
         //{

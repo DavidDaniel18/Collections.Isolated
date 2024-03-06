@@ -7,8 +7,7 @@ using Collections.Isolated.Domain.Dictionary.ValueObjects;
 namespace Collections.Isolated.Context;
 
 /// <inheritdoc cref="IDictionaryContext{TValue}"/>
-public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictionary) : IDictionaryContext<TValue>
-    where TValue : class
+internal sealed class DictionaryContext<TValue>(ISyncStoreAsync<TValue> dictionaryAsync) : IDictionaryContext<TValue>
 {
     private IntentionLock _intentionLock = new (
         Guid.NewGuid().ToString(),
@@ -43,9 +42,8 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
 
         ValideLockedKeysIntent(key);
 
-        await dictionary.AddOrUpdateAsync(key, value, _intentionLock);
+        await dictionaryAsync.AddOrUpdateAsync(key, value, _intentionLock);
     }
-
 
     /// <inheritdoc cref="IDictionaryContext{TValue}.RemoveAsync"/>
     public async Task RemoveAsync(string key)
@@ -56,7 +54,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
 
         ValideLockedKeysIntent(key);
 
-        await dictionary.RemoveAsync(key, _intentionLock);
+        await dictionaryAsync.RemoveAsync(key, _intentionLock);
     }
 
     /// <inheritdoc cref="IDictionaryContext{TValue}.CountAsync"/>
@@ -67,7 +65,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
         if(_intentionLock.KeysToLock.Count > 0)
             throw new InvalidOperationException("Cannot count with locked keys.");
 
-        return await dictionary.CountAsync(_intentionLock);
+        return await dictionaryAsync.CountAsync(_intentionLock);
     }
 
     /// <inheritdoc cref="IDictionaryContext{TValue}.TryGetAsync"/>
@@ -77,7 +75,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
 
         ValideLockedKeysIntent(key);
 
-        return await dictionary.GetAsync(key, _intentionLock);
+        return await dictionaryAsync.GetAsync(key, _intentionLock);
     }
 
     /// <inheritdoc cref="IDictionaryContext{TValue}.SaveChangesAsync"/>
@@ -85,7 +83,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
     {
         RenewTransaction();
 
-        await dictionary.SaveChangesAsync(_intentionLock);
+        await dictionaryAsync.SaveChangesAsync(_intentionLock);
 
         _disposed = true;
 
@@ -95,7 +93,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
     /// <inheritdoc />
     public IEnumerable<TValue> GetTrackedEntities()
     {
-        return dictionary.GetTrackedEntities(_intentionLock);
+        return dictionaryAsync.GetTrackedEntities(_intentionLock);
     }
 
     /// <inheritdoc cref="IDictionaryContext{TValue}.RollBack"/>
@@ -110,7 +108,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
     /// <remarks>Do not use this if you're name isn't CLR</remarks>
     public void Dispose()
     {
-        dictionary.UndoChangesAsync(_intentionLock).Wait();
+        dictionaryAsync.UndoChangesAsync(_intentionLock).Wait();
 
         _disposed = true;
 
@@ -144,7 +142,7 @@ public sealed class DictionaryContext<TValue>(IIsolatedDictionary<TValue> dictio
     /// <returns></returns>
     public IEnumerator<TValue> GetEnumerator()
     {
-        var allValues = dictionary.GetAllAsync(_intentionLock).Result;
+        var allValues = dictionaryAsync.GetAllAsync(_intentionLock).Result;
 
         return allValues.GetEnumerator();
     }

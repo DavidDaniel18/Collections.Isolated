@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+option csharp_namespace = "syncStore";
+
+package SyncStore;
+
+message RaftContext {
+  string SenderId = 1;
+  int32 Term = 2;
+  int32 LastLogIndex = 3;
+}
+
+message IntentionLock {
+  string TransactionId = 4;
+}
+
+message KeyValue {
+  string Key = 1;
+  google.protobuf.Any Value = 2;
+}
+
+message WriteOperation {
+  KeyValue KeyValue = 1;
+  RaftContext RaftContext = 2;
+}
+
+message LogSnapshot {
+  repeated KeyValue Operations = 1;
+  int64 LastLogTime = 2;
+  RaftContext RaftContext = 3;
+}
+
+message UpdateTransactionRequest {
+  string IntentionLockTransactionId = 1;
+  LogSnapshot LogSnapshot = 2;
+  RaftContext RaftContext = 3;
+}
+
+message GetRequest {
+  string Key = 1;
+  IntentionLock IntentionLock = 2;
+  RaftContext RaftContext = 3;
+}
+
+message AddOrUpdateRequest {
+  string Key = 1;
+  google.protobuf.Any Value = 2;
+  IntentionLock IntentionLock = 3;
+  RaftContext RaftContext = 4;
+}
+
+message RemoveRequest {
+  string Key = 1;
+  IntentionLock IntentionLock = 2;
+  RaftContext RaftContext = 3;
+}
+
+message TValueResponse {
+  google.protobuf.Any Value = 1;
+}
+
+message TValueListResponse {
+  repeated TValueResponse Values = 1;
+}
+
+service SyncStore {
+  rpc SaveChangesAsync (IntentionLock) returns (google.protobuf.Empty);
+  rpc CountAsync (IntentionLock) returns (google.protobuf.Int32Value);
+  rpc UndoChangesAsync (IntentionLock) returns (google.protobuf.Empty);
+  rpc EnsureTransactionCreatedAsync (IntentionLock) returns (google.protobuf.Empty);
+  rpc ContainsTransaction (google.protobuf.StringValue) returns (google.protobuf.BoolValue);
+  rpc UpdateTransactionWithLogAsync (UpdateTransactionRequest) returns (google.protobuf.Empty);
+  rpc GetAsync (GetRequest) returns (TValueResponse);
+  rpc AddOrUpdateAsync (AddOrUpdateRequest) returns (google.protobuf.Empty);
+  rpc RemoveAsync (RemoveRequest) returns (google.protobuf.Empty);
+  rpc GetAllAsync (IntentionLock) returns (TValueListResponse);
+}

@@ -7,7 +7,6 @@
 /// </summary>
 /// <typeparam name="TValue">The type of value to store.</typeparam>
 public interface IDictionaryContext<TValue> : IEnumerable<TValue>, IDisposable
-    where TValue : class
 {
     /// <summary>
     /// Locks the dictionary for the given keys with the given intention. Significant performance improvements can be made by using this method.

@@ -6,9 +6,9 @@ using Xunit.Abstractions;
 
 namespace IsolatedDictionaryTests
 {
-    public class IsolatedDictionaryTests : IntegrationTest
+    public class SyncStoreTests : IntegrationTest
     {
-        public IsolatedDictionaryTests(ITestOutputHelper outputHelper) : base(outputHelper)
+        public SyncStoreTests(ITestOutputHelper outputHelper) : base(outputHelper)
         {
         }
 

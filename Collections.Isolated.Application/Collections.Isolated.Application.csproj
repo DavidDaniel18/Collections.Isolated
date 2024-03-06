@@ -8,9 +8,11 @@
 
   <ItemGroup>
     <None Remove="Contracts\distributedLock.proto" />
+    <None Remove="Contracts\syncStore.proto" />
   </ItemGroup>
 
 	<ItemGroup>
+		<Protobuf Include="Contracts\syncStore.proto" GrpcServices="Both" />
 		<Protobuf Include="Contracts\election.proto" GrpcServices="Both" />
 		<Protobuf Include="Contracts\distributedLock.proto" GrpcServices="Both" />
 		<Protobuf Include="Contracts\stateLogger.proto" GrpcServices="Both" />
@@ -30,6 +32,7 @@
 	  <Folder Include="Commands\Election\" />
 	  <Folder Include="Commands\Lock\" />
 	  <Folder Include="Commands\Updates\" />
+	  <Folder Include="Synchronisation\" />
 	</ItemGroup>
 
 </Project>

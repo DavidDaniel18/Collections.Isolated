@@ -18,7 +18,7 @@ public sealed class BenchmarkTests : IntegrationTest
     }
 
     [Fact]
-    public void CompareAddPerformanceAsync()
+    public async Task CompareAddPerformanceAsync()
     {
         var logger = Scope.ServiceProvider.GetRequiredService<ILogger<DictionaryContext<string>>>();
         var customDictionary = Scope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
@@ -27,7 +27,7 @@ public sealed class BenchmarkTests : IntegrationTest
 
         // Test custom dictionary add
         stopwatch.Start();
-        customDictionary.AddOrUpdateAsync("key", "value");
+        await customDictionary.AddOrUpdateAsync("key", "value");
         stopwatch.Stop();
         var customAddTime = stopwatch.ElapsedTicks;
 
@@ -46,7 +46,7 @@ public sealed class BenchmarkTests : IntegrationTest
     }
 
     [Fact]
-    public void CompareAddPerformanceAsync_concurrentdict()
+    public async Task CompareAddPerformanceAsync_concurrentdict()
     {
         var logger = Scope.ServiceProvider.GetRequiredService<ILogger<DictionaryContext<string>>>();
         var customDictionary = Scope.ServiceProvider.GetRequiredService<IDictionaryContext<string>>();
@@ -55,7 +55,7 @@ public sealed class BenchmarkTests : IntegrationTest
 
         // Test custom dictionary add
         stopwatch.Start();
-        customDictionary.AddOrUpdateAsync("key", "value");
+        await customDictionary.AddOrUpdateAsync("key", "value");
         stopwatch.Stop();
         var customAddTime = stopwatch.ElapsedTicks;
 
@@ -82,8 +82,8 @@ public sealed class BenchmarkTests : IntegrationTest
         var stopwatch = new Stopwatch();
 
         // Prepare - ensure both dictionaries have the item to retrieve
-        customDictionary.AddOrUpdateAsync("key", "value");
-        customDictionary.SaveChangesAsync();
+        await customDictionary.AddOrUpdateAsync("key", "value");
+        await customDictionary.SaveChangesAsync();
 
         // Test custom dictionary get
         stopwatch.Restart();
@@ -114,7 +114,7 @@ public sealed class BenchmarkTests : IntegrationTest
         var stopwatch = new Stopwatch();
 
         // Prepare - ensure both dictionaries have the item to retrieve
-        customDictionary.AddOrUpdateAsync("key", "value");
+        await customDictionary.AddOrUpdateAsync("key", "value");
         await customDictionary.SaveChangesAsync();
         standardDictionary.TryAdd("key", "value");
 
